@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace MB\Filesystem\ClassFinder;
+namespace MB\Filesystem\Finder;
 
 use MB\Filesystem\Contracts\Filesystem;
 use MB\Support\Collection;

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use MB\Filesystem\ClassFinder\PhpClassFinder;
+use MB\Filesystem\Finder\PhpClassFinder;
 use MB\Filesystem\Filesystem;
 
 final class PhpClassFinderTest extends \PHPUnit\Framework\TestCase

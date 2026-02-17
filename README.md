@@ -123,7 +123,7 @@ The package provides a `PhpClassFinder` utility that can find classes by base pa
 
 ```php
 use MB\Filesystem\Filesystem;
-use MB\Filesystem\ClassFinder\PhpClassFinder;
+use MB\Filesystem\Finder\PhpClassFinder;
 
 $filesystem = new Filesystem(); // you can pass basePath if needed
 $finder = new PhpClassFinder($filesystem);
@@ -137,6 +137,40 @@ $byImplements = $finder->findByImplements(__DIR__ . '/src', App\MyInterface::cla
 foreach ($byImplements as $info) {
     echo $info['class'] . ' defined in ' . $info['file'] . PHP_EOL;
 }
+```
+
+## Content search
+
+To search for files by their contents, you can use the `ContentFinder` utility.
+
+```php
+use MB\Filesystem\Filesystem;
+use MB\Filesystem\Finder\ContentFinder;
+
+$filesystem = new Filesystem();
+$searcher = new ContentFinder($filesystem);
+
+// Find all PHP files under /bitrix that contain $APPLICATION->IncludeComponent(
+$files = $searcher->findBySubstring(
+    __DIR__ . '/bitrix',
+    '$APPLICATION->IncludeComponent(',
+    extensions: ['php'],
+);
+
+// Find only component*.php files that contain the substring
+$componentFiles = $searcher->findBySubstring(
+    __DIR__ . '/bitrix',
+    '$APPLICATION->IncludeComponent(',
+    extensions: ['php'],
+    filenameMask: 'component*.php',
+);
+
+// Use regex to find calls with arbitrary whitespace
+$regexMatches = $searcher->findByRegex(
+    __DIR__ . '/bitrix',
+    '/\$APPLICATION->IncludeComponent\s*\(/',
+    extensions: ['php'],
+);
 ```
 
 ## Error handling
