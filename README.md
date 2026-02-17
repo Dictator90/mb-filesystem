@@ -1,18 +1,18 @@
-# mb4it/filesystem
+# MB Filesystem
 
-Лёгкая обёртка над локальной файловой системой PHP с удобным, предсказуемым API, основанным на исключениях.
+Lightweight wrapper around the local PHP filesystem with a convenient, predictable, exception‑based API.
 
-## Требования
+## Requirements
 
 - PHP 8.1+
 
-## Установка
+## Installation
 
 ```bash
 composer require mb4it/filesystem
 ```
 
-## Базовое использование
+## Basic usage
 
 ```php
 <?php
@@ -23,71 +23,70 @@ use MB\Filesystem\Exceptions\IOException;
 
 $filesystem = new Filesystem(__DIR__ . '/storage');
 
-// Запись файла
+// Write file
 $filesystem->put('example.txt', 'Hello, world!');
 
-// Чтение файла
+// Read file
 try {
     $content = $filesystem->get('example.txt');
 } catch (FileNotFoundException $e) {
-    // файл не найден
+    // file not found
 } catch (IOException $e) {
-    // другая ошибка ввода-вывода
+    // other I/O error
 }
 ```
 
-## Работа с JSON
+## Working with JSON
 
 ```php
 $filesystem = new Filesystem(__DIR__ . '/storage');
 
-// Записать массив как JSON
+// Write array as JSON
 $filesystem->putJson('config.json', ['debug' => true]);
 
-// Прочитать JSON как массив
+// Read JSON as array
 $config = $filesystem->getJson('config.json', true);
 
-// Прочитать JSON или вернуть значение по умолчанию,
-// если файл отсутствует
+// Read JSON or return default value if file is missing
 $config = $filesystem->getJsonOrDefault('missing.json', ['debug' => false]);
 
-// Обновление JSON через read-modify-write
+// Update JSON via read‑modify‑write
 $filesystem->updateJson('config.json', static function (array $data): array {
     $data['debug'] = false;
     return $data;
 });
 ```
 
-## Директории и рекурсивные операции
+## Directories and recursive operations
 
 ```php
 $filesystem = new Filesystem(__DIR__ . '/storage');
 
-// Создать директорию (включая родителей)
+// Create directory (including parents)
 $filesystem->makeDirectory('logs/app');
 
-// Получить файлы/папки
-$files = $filesystem->files('logs', true);        // рекурсивно
-$dirs  = $filesystem->directories('logs', true);  // рекурсивно
+// Get files / directories
+$files = $filesystem->files('logs', true);        // recursive
+$dirs  = $filesystem->directories('logs', true);  // recursive
 
-// Рекурсивное копирование и удаление
+// Recursive copy and delete
 $filesystem->copyDirectoryRecursive('logs', 'logs_backup');
 $filesystem->deleteDirectoryRecursive('logs_backup');
 ```
 
-## Маски и фильтрация
+## Masks and filtering
 
 ```php
 $filesystem = new Filesystem(__DIR__ . '/storage');
 
-// Все .log-файлы (с учётом рекурсии)
+// All .log files (with recursion)
 $logFiles = $filesystem->filesWithExtension('logs', 'log', true);
 
-// Файлы по маске имени
+// Files by name mask
 $appLogs = $filesystem->filesByPattern('logs', 'app*.log', true);
 ```
 
-## Метаданные и режимы записи
+## Metadata and write modes
 
 ```php
 $filesystem = new Filesystem(__DIR__ . '/storage');
@@ -97,10 +96,10 @@ $filesystem->put('file.txt', '12345');
 $size = $filesystem->size('file.txt');          // 5
 $mtime = $filesystem->lastModified('file.txt'); // UNIX timestamp
 
-// Дозапись
+// Append
 $filesystem->append('file.txt', '678');
 
-// Атомарная запись
+// Atomic write
 $filesystem->putAtomic('file.txt', 'new content');
 ```
 
