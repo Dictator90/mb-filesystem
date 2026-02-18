@@ -123,12 +123,14 @@ interface Filesystem
     /**
      * Read-modify-write cycle for file content. If file does not exist, updater receives empty string.
      *
+     * @param File|string    $fileOrPath File node or path string.
      * @param callable(string):string $updater
+     * @param bool           $atomic     When true (default), write via temp file + rename so the file is never partially written on failure. When false, write directly (faster, but a crash during write can leave the file corrupted).
      *
      * @throws \MB\Filesystem\Exceptions\IOException On read/write failure.
      * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to write.
      */
-    public function updateContent(string $path, callable $updater): void;
+    public function updateContent(File|string $fileOrPath, callable $updater, bool $atomic = true): void;
 
     /**
      * Get file metadata as a File value object.
@@ -181,22 +183,36 @@ interface Filesystem
     public function makeDirectory(string $path, int $mode = 0755, bool $recursive = true): void;
 
     /**
-     * Delete an empty directory.
+     * Set file or directory permissions (mode).
      *
-     * @throws \MB\Filesystem\Exceptions\IOException If the path is not a directory or cannot be removed.
-     * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to delete it.
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the path does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException On failure.
+     * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to change mode.
      */
-    public function deleteDirectory(string $directory): void;
+    public function chmod(string $path, int $mode): void;
 
     /**
-     * Recursively delete a directory with all its contents.
+     * Set access and modification time of a file or directory.
+     *
+     * @param int|null $mtime Unix timestamp; null for current time.
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the path does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException On failure.
+     * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions.
+     */
+    public function touch(string $path, ?int $mtime = null): void;
+
+    /**
+     * Delete a directory. When recursive is true, deletes contents first; when false, only empty directory.
      *
      * Idempotent: if the directory does not exist, nothing happens.
      *
-     * @throws \MB\Filesystem\Exceptions\IOException On deletion errors.
+     * @param bool $recursive If true, delete directory and all its contents.
+     *
+     * @throws \MB\Filesystem\Exceptions\IOException If the path is not a directory or cannot be removed.
      * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to delete.
      */
-    public function deleteDirectoryRecursive(string $directory): void;
+    public function deleteDirectory(string $directory, bool $recursive = false): void;
 
     /**
      * Recursively copy a directory to a new location.

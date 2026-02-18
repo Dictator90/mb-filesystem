@@ -17,7 +17,7 @@ final class ContentSearcherTest extends \PHPUnit\Framework\TestCase
     protected function tearDown(): void
     {
         $filesystem = new Filesystem();
-        $filesystem->deleteDirectoryRecursive($this->tmpDir);
+        $filesystem->deleteDirectory($this->tmpDir, true);
     }
 
     private function makeFilesystem(): Filesystem

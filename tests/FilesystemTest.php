@@ -19,7 +19,7 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
     protected function tearDown(): void
     {
         $filesystem = new Filesystem();
-        $filesystem->deleteDirectoryRecursive($this->tmpDir);
+        $filesystem->deleteDirectory($this->tmpDir, true);
     }
 
     private function fs(): Filesystem
@@ -204,6 +204,138 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs = $this->fs();
         $fs->put('file.txt', 'x');
         $fs->directory('file.txt');
+    }
+
+    public function testUpdateContentAcceptsFileObject(): void
+    {
+        $fs = $this->fs();
+        $fs->put('log.txt', 'a');
+        $file = $fs->file('log.txt');
+        $fs->updateContent($file, static fn (string $c) => $c . 'b');
+        $this->assertSame('ab', $fs->get('log.txt'));
+    }
+
+    public function testUpdateContentAtomicTrueOverwritesCorrectly(): void
+    {
+        $fs = $this->fs();
+        $fs->put('atomic.txt', 'initial');
+        $fs->updateContent('atomic.txt', static fn (string $c) => $c . '-updated', true);
+        $this->assertSame('initial-updated', $fs->get('atomic.txt'));
+    }
+
+    public function testUpdateContentAtomicFalseOverwritesCorrectly(): void
+    {
+        $fs = $this->fs();
+        $fs->put('nonatomic.txt', 'initial');
+        $fs->updateContent('nonatomic.txt', static fn (string $c) => $c . '-updated', false);
+        $this->assertSame('initial-updated', $fs->get('nonatomic.txt'));
+    }
+
+    public function testFileUpdateAcceptsAtomicParameter(): void
+    {
+        $fs = $this->fs();
+        $fs->put('node.txt', 'x');
+        $file = $fs->file('node.txt');
+        $file->update(static fn (string $c) => $c . 'y', false);
+        $this->assertSame('xy', $fs->get('node.txt'));
+    }
+
+    public function testFileNodeContentAndLinesAndUpdate(): void
+    {
+        $fs = $this->fs();
+        $fs->put('lines.txt', "line1\nline2\nline3");
+        $file = $fs->file('lines.txt');
+
+        $this->assertSame("line1\nline2\nline3", $file->content());
+
+        $lines = iterator_to_array($file->lines());
+        $this->assertCount(3, $lines);
+        $this->assertSame("line1\n", $lines[0]);
+        $this->assertSame("line2\n", $lines[1]);
+        $this->assertSame('line3', $lines[2]);
+
+        $file->update(static fn (string $c) => $c . "\nline4");
+        $this->assertStringEndsWith('line4', $fs->get('lines.txt'));
+    }
+
+    public function testFileNodeLineByNumber(): void
+    {
+        $fs = $this->fs();
+        $fs->put('numbered.txt', "first\nsecond\nthird");
+        $file = $fs->file('numbered.txt');
+
+        $this->assertSame("first\n", $file->line(1));
+        $this->assertSame("second\n", $file->line(2));
+        $this->assertSame('third', $file->line(3));
+
+        $this->expectException(IOException::class);
+        $this->expectExceptionMessage('Line 5 does not exist');
+        $file->line(5);
+    }
+
+    public function testFileNodeLineRequiresPositiveNumber(): void
+    {
+        $fs = $this->fs();
+        $fs->put('one.txt', 'x');
+        $file = $fs->file('one.txt');
+
+        $this->expectException(IOException::class);
+        $this->expectExceptionMessage('Line number must be >= 1');
+        $file->line(0);
+    }
+
+    public function testFileNodeWriteAndDelete(): void
+    {
+        $fs = $this->fs();
+        $fs->put('writable.txt', 'old');
+        $file = $fs->file('writable.txt');
+        $file->write('new');
+        $this->assertSame('new', $file->content());
+        $file->delete();
+        $this->assertFalse($fs->exists('writable.txt'));
+    }
+
+    public function testDeleteDirectoryNonRecursive(): void
+    {
+        $fs = $this->fs();
+        $fs->makeDirectory('empty');
+        $this->assertTrue($fs->existsDirectory('empty'));
+        $fs->deleteDirectory('empty', false);
+        $this->assertFalse($fs->exists('empty'));
+    }
+
+    public function testDeleteDirectoryRecursive(): void
+    {
+        $fs = $this->fs();
+        $fs->makeDirectory('tree/a');
+        $fs->put('tree/f.txt', 'x');
+        $fs->put('tree/a/b.txt', 'y');
+        $fs->deleteDirectory('tree', true);
+        $this->assertFalse($fs->exists('tree'));
+    }
+
+    public function testChmodAndTouch(): void
+    {
+        $fs = $this->fs();
+        $fs->put('perms.txt', 'x');
+        $fs->chmod('perms.txt', 0644);
+        $file = $fs->file('perms.txt');
+        $this->assertIsInt($file->mode);
+
+        $past = time() - 100;
+        $fs->touch('perms.txt', $past);
+        $this->assertSame($past, $fs->lastModified('perms.txt'));
+    }
+
+    public function testDirectoryNodeDeleteAndFiles(): void
+    {
+        $fs = $this->fs();
+        $fs->makeDirectory('dir');
+        $fs->put('dir/a.txt', 'a');
+        $dir = $fs->directory('dir');
+        $this->assertCount(1, $dir->files());
+        $dir->delete(true);
+        $this->assertFalse($fs->exists('dir'));
     }
 }
 

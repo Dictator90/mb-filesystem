@@ -29,7 +29,8 @@
     "phpunit/phpunit": "^10.0"
   },
   "scripts": {
-    "test": "phpunit"
+    "test": "phpunit",
+    "benchmark": "php benchmark/run.php"
   }
   
 }

@@ -59,29 +59,60 @@ $filesystem->updateJson('config.json', static function (array $data): array {
 
 ## Content and updateContent (plain files)
 
-For non-JSON files you can use `content()` with an optional default and `updateContent()` for read-modify-write:
+For non-JSON files you can use `content()` with an optional default and `updateContent()` for read-modify-write. `updateContent()` accepts either a path or a `File` object. For batch updates by path, prefer calling `updateContent($path, $updater)` with a string path so you avoid creating a `File` node per path (faster). The third parameter `$atomic` (default `true`) uses a temp file + rename so the file is never partially written on failure; pass `false` for higher throughput when crash-safety is not critical (e.g. logs, cache).
 
 ```php
 // Read content, or default if file is missing
 $text = $filesystem->content('log.txt', '');
 
-// Read-modify-write (creates file with empty content if missing)
+// Read-modify-write (creates file with empty content if missing). Atomic by default.
 $filesystem->updateContent('log.txt', static function (string $current): string {
     return $current . "New line\n";
 });
+
+// Non-atomic (faster) when crash during write is acceptable
+$filesystem->updateContent('cache.txt', static function (string $c): string {
+    return $c . "entry\n";
+}, false);
+
+// Or pass a File node when you already have one
+$file = $filesystem->file('log.txt');
+$filesystem->updateContent($file, static function (string $current): string {
+    return $current . "Appended\n";
+});
 ```
 
-## File and Directory metadata
+## File and Directory (rich nodes)
 
-Get full metadata as value objects:
+`file()` and `directory()` return rich nodes with metadata and operations. Use them to read, update, or delete without passing the path again.
+
+**File** — metadata: `path`, `size`, `lastModified`, `extension`, `basename`, `filename`, `dirname`, `readable`, `writable`, `mode`. For large files use `lines()` instead of `content()` to avoid loading the whole file into memory.
 
 ```php
 $file = $filesystem->file('path/to/file.txt');
-// $file->path, $file->size, $file->lastModified, $file->extension,
-// $file->basename, $file->filename, $file->dirname, $file->readable, $file->writable
 
+$file->content();           // full content (string)
+foreach ($file->lines() as $i => $line) { /* line-by-line, memory-efficient */ }
+$file->update(fn (string $c) => $c . "\nnew line");  // optional second arg: $atomic = true
+$file->write('new content');
+$file->delete();
+$file->move('other.txt');
+$file->copy('backup.txt');
+$file->chmod(0644);
+$file->touch();             // or touch($mtime)
+```
+
+**Directory** — metadata: `path`, `lastModified`, `readable`, `writable`, `mode`. Delete with optional recursion.
+
+```php
 $dir = $filesystem->directory('path/to/dir');
-// $dir->path, $dir->lastModified, $dir->readable, $dir->writable
+
+$dir->files(true);          // list files, recursive
+$dir->directories(true);    // list subdirs
+$dir->create(0755, true);   // ensure exists
+$dir->delete(true);         // delete recursively
+$dir->chmod(0755);
+$dir->touch($mtime);
 ```
 
 ## Directories and recursive operations
@@ -98,7 +129,7 @@ $dirs  = $filesystem->directories('logs', true);  // recursive
 
 // Recursive copy and delete
 $filesystem->copyDirectoryRecursive('logs', 'logs_backup');
-$filesystem->deleteDirectoryRecursive('logs_backup');
+$filesystem->deleteDirectory('logs_backup', true);
 ```
 
 ## Masks and filtering
@@ -122,6 +153,10 @@ $filesystem->put('file.txt', '12345');
 
 $size = $filesystem->size('file.txt');          // 5
 $mtime = $filesystem->lastModified('file.txt'); // UNIX timestamp
+
+// Permissions and mtime
+$filesystem->chmod('file.txt', 0644);
+$filesystem->touch('file.txt', $mtime);         // or null for current time
 
 // Append
 $filesystem->append('file.txt', '678');

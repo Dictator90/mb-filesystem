@@ -211,10 +211,11 @@ class Filesystem implements FilesystemContract
         $fullPath = $this->resolvePath($path);
         $directory = \dirname($fullPath);
 
-        $this->ensureDirectoryExists($directory);
-
-        if (!is_writable($directory)) {
-            throw new PermissionException($directory, 'write');
+        if (!file_exists($fullPath)) {
+            $this->ensureDirectoryExists($directory);
+            if (!is_writable($directory)) {
+                throw new PermissionException($directory, 'write');
+            }
         }
 
         $tempPath = $directory . DIRECTORY_SEPARATOR . basename($fullPath) . '.' . uniqid('tmp', true);
@@ -292,8 +293,13 @@ class Filesystem implements FilesystemContract
         return $this->get($path);
     }
 
-    public function updateContent(string $path, callable $updater): void
+    /**
+     * Read-modify-write. When $atomic is true (default), writes via temp file + rename so the file is never partially written on failure. When false, writes directly (faster; a crash during write can corrupt the file).
+     */
+    public function updateContent(File|string $fileOrPath, callable $updater, bool $atomic = true): void
     {
+        $path = $fileOrPath instanceof File ? $fileOrPath->path : $fileOrPath;
+
         $current = '';
         try {
             $current = $this->get($path);
@@ -306,7 +312,11 @@ class Filesystem implements FilesystemContract
             throw new IOException('Content updater must return a string.');
         }
 
-        $this->putAtomic($path, $newContent);
+        if ($atomic) {
+            $this->putAtomic($path, $newContent);
+        } else {
+            $this->put($path, $newContent);
+        }
     }
 
     public function file(string $path): File
@@ -327,7 +337,11 @@ class Filesystem implements FilesystemContract
             throw new IOException("Unable to get last modified time of file: {$fullPath}");
         }
 
+        $perms = @fileperms($fullPath);
+        $mode = ($perms !== false) ? ($perms & 0777) : 0;
+
         return new File(
+            filesystem: $this,
             path: $fullPath,
             size: $size,
             lastModified: $mtime,
@@ -337,6 +351,7 @@ class Filesystem implements FilesystemContract
             dirname: \dirname($fullPath),
             readable: is_readable($fullPath),
             writable: is_writable($fullPath),
+            mode: $mode,
         );
     }
 
@@ -353,11 +368,16 @@ class Filesystem implements FilesystemContract
             $mtime = 0;
         }
 
+        $perms = @fileperms($fullPath);
+        $mode = ($perms !== false) ? ($perms & 0777) : 0;
+
         return new Directory(
+            filesystem: $this,
             path: $fullPath,
             lastModified: $mtime,
             readable: is_readable($fullPath),
             writable: is_writable($fullPath),
+            mode: $mode,
         );
     }
 
@@ -485,7 +505,37 @@ class Filesystem implements FilesystemContract
         }
     }
 
-    public function deleteDirectory(string $directory): void
+    public function chmod(string $path, int $mode): void
+    {
+        $fullPath = $this->resolvePath($path);
+
+        if (!file_exists($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        if (!@chmod($fullPath, $mode)) {
+            if (!is_writable($fullPath) && !is_dir($fullPath)) {
+                throw new PermissionException($fullPath, 'chmod');
+            }
+            throw new IOException("Unable to chmod: {$fullPath}");
+        }
+    }
+
+    public function touch(string $path, ?int $mtime = null): void
+    {
+        $fullPath = $this->resolvePath($path);
+
+        if (!file_exists($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        $time = $mtime ?? time();
+        if (!@touch($fullPath, $time)) {
+            throw new IOException("Unable to touch: {$fullPath}");
+        }
+    }
+
+    public function deleteDirectory(string $directory, bool $recursive = false): void
     {
         $fullPath = $this->resolvePath($directory);
 
@@ -495,6 +545,27 @@ class Filesystem implements FilesystemContract
 
         if (!is_dir($fullPath)) {
             throw new IOException("Not a directory: {$fullPath}");
+        }
+
+        if ($recursive) {
+            $items = @scandir($fullPath);
+            if ($items === false) {
+                throw new IOException("Unable to scan directory: {$fullPath}");
+            }
+
+            foreach ($items as $item) {
+                if ($item === '.' || $item === '..') {
+                    continue;
+                }
+
+                $path = $fullPath . DIRECTORY_SEPARATOR . $item;
+
+                if (is_dir($path)) {
+                    $this->deleteDirectory($path, true);
+                } else {
+                    $this->delete($path);
+                }
+            }
         }
 
         if (!is_writable($fullPath)) {
@@ -504,40 +575,6 @@ class Filesystem implements FilesystemContract
         if (!@rmdir($fullPath)) {
             throw new IOException("Unable to delete directory: {$fullPath}");
         }
-    }
-
-    public function deleteDirectoryRecursive(string $directory): void
-    {
-        $fullPath = $this->resolvePath($directory);
-
-        if (!file_exists($fullPath)) {
-            return;
-        }
-
-        if (!is_dir($fullPath)) {
-            throw new IOException("Not a directory: {$fullPath}");
-        }
-
-        $items = @scandir($fullPath);
-        if ($items === false) {
-            throw new IOException("Unable to scan directory: {$fullPath}");
-        }
-
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-
-            $path = $fullPath . DIRECTORY_SEPARATOR . $item;
-
-            if (is_dir($path)) {
-                $this->deleteDirectoryRecursive($path);
-            } else {
-                $this->delete($path);
-            }
-        }
-
-        $this->deleteDirectory($fullPath);
     }
 
     public function copyDirectoryRecursive(string $from, string $to): void
@@ -581,8 +618,35 @@ class Filesystem implements FilesystemContract
         }
 
         $result = [];
-        $items = @scandir($fullPath);
+        if ($recursive) {
+            $this->collectFilesRecursive($fullPath, $result);
+        } else {
+            $items = @scandir($fullPath);
+            if ($items === false) {
+                throw new IOException("Unable to scan directory: {$fullPath}");
+            }
+            foreach ($items as $item) {
+                if ($item === '.' || $item === '..') {
+                    continue;
+                }
+                $path = $fullPath . DIRECTORY_SEPARATOR . $item;
+                if (is_file($path)) {
+                    $result[] = $path;
+                }
+            }
+        }
 
+        return $result;
+    }
+
+    /**
+     * Recursively collect file paths into the given array (single allocation pass).
+     *
+     * @param array<int,string> $result
+     */
+    private function collectFilesRecursive(string $fullPath, array &$result): void
+    {
+        $items = @scandir($fullPath);
         if ($items === false) {
             throw new IOException("Unable to scan directory: {$fullPath}");
         }
@@ -596,12 +660,10 @@ class Filesystem implements FilesystemContract
 
             if (is_file($path)) {
                 $result[] = $path;
-            } elseif ($recursive && is_dir($path)) {
-                $result = array_merge($result, $this->files($path, true));
+            } elseif (is_dir($path)) {
+                $this->collectFilesRecursive($path, $result);
             }
         }
-
-        return $result;
     }
 
     /**
@@ -650,8 +712,35 @@ class Filesystem implements FilesystemContract
         }
 
         $result = [];
-        $items = @scandir($fullPath);
+        if ($recursive) {
+            $this->collectDirectoriesRecursive($fullPath, $result);
+        } else {
+            $items = @scandir($fullPath);
+            if ($items === false) {
+                throw new IOException("Unable to scan directory: {$fullPath}");
+            }
+            foreach ($items as $item) {
+                if ($item === '.' || $item === '..') {
+                    continue;
+                }
+                $path = $fullPath . DIRECTORY_SEPARATOR . $item;
+                if (is_dir($path)) {
+                    $result[] = $path;
+                }
+            }
+        }
 
+        return $result;
+    }
+
+    /**
+     * Recursively collect directory paths into the given array (single allocation pass).
+     *
+     * @param array<int,string> $result
+     */
+    private function collectDirectoriesRecursive(string $fullPath, array &$result): void
+    {
+        $items = @scandir($fullPath);
         if ($items === false) {
             throw new IOException("Unable to scan directory: {$fullPath}");
         }
@@ -665,14 +754,9 @@ class Filesystem implements FilesystemContract
 
             if (is_dir($path)) {
                 $result[] = $path;
-
-                if ($recursive) {
-                    $result = array_merge($result, $this->directories($path, true));
-                }
+                $this->collectDirectoriesRecursive($path, $result);
             }
         }
-
-        return $result;
     }
 
     /**
