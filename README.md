@@ -45,16 +45,43 @@ $filesystem = new Filesystem(__DIR__ . '/storage');
 $filesystem->putJson('config.json', ['debug' => true]);
 
 // Read JSON as array
-$config = $filesystem->getJson('config.json', true);
+$config = $filesystem->json('config.json', true);
 
 // Read JSON or return default value if file is missing
-$config = $filesystem->getJsonOrDefault('missing.json', ['debug' => false]);
+$config = $filesystem->json('missing.json', true, ['debug' => false]);
 
 // Update JSON via read‑modify‑write
 $filesystem->updateJson('config.json', static function (array $data): array {
     $data['debug'] = false;
     return $data;
 });
+```
+
+## Content and updateContent (plain files)
+
+For non-JSON files you can use `content()` with an optional default and `updateContent()` for read-modify-write:
+
+```php
+// Read content, or default if file is missing
+$text = $filesystem->content('log.txt', '');
+
+// Read-modify-write (creates file with empty content if missing)
+$filesystem->updateContent('log.txt', static function (string $current): string {
+    return $current . "New line\n";
+});
+```
+
+## File and Directory metadata
+
+Get full metadata as value objects:
+
+```php
+$file = $filesystem->file('path/to/file.txt');
+// $file->path, $file->size, $file->lastModified, $file->extension,
+// $file->basename, $file->filename, $file->dirname, $file->readable, $file->writable
+
+$dir = $filesystem->directory('path/to/dir');
+// $dir->path, $dir->lastModified, $dir->readable, $dir->writable
 ```
 
 ## Directories and recursive operations
@@ -117,9 +144,9 @@ $norm = $filesystem->normalize('./foo/../bar/test');  // bar/test
 $rel  = $filesystem->relative('/var/www/app', '/var/www'); // app
 ```
 
-## Finding PHP classes by extends/implements
+## Finding PHP classes by extends/implements/traits
 
-The package provides a `PhpClassFinder` utility that can find classes by base parent or implemented interface.
+The package provides a `PhpClassFinder` utility that can find classes by base parent, implemented interface, or used trait.
 
 ```php
 use MB\Filesystem\Filesystem;
@@ -129,36 +156,35 @@ $filesystem = new Filesystem(); // you can pass basePath if needed
 $finder = new PhpClassFinder($filesystem);
 
 // Find all classes that extend App\BaseClass
-$byExtends = $finder->findByExtends(__DIR__ . '/src', App\BaseClass::class);
+$byExtends = $finder->extends(__DIR__ . '/src', App\BaseClass::class);
 
 // Find all classes that implement App\MyInterface
-$byImplements = $finder->findByImplements(__DIR__ . '/src', App\MyInterface::class);
+$byImplements = $finder->implements(__DIR__ . '/src', App\MyInterface::class);
+
+// Find all classes that use App\MyTrait
+$withTrait = $finder->hasTrait(__DIR__ . '/src', App\MyTrait::class);
 
 foreach ($byImplements as $info) {
     echo $info['class'] . ' defined in ' . $info['file'] . PHP_EOL;
 }
 ```
 
-## Content search
+## Content search (substring and regex)
 
-To search for files by their contents, you can use the `ContentFinder` utility.
+Search for files by content using `substring()` and `regex()` on the Filesystem instance.
 
 ```php
-use MB\Filesystem\Filesystem;
-use MB\Filesystem\Finder\ContentFinder;
-
 $filesystem = new Filesystem();
-$searcher = new ContentFinder($filesystem);
 
 // Find all PHP files under /bitrix that contain $APPLICATION->IncludeComponent(
-$files = $searcher->findBySubstring(
+$files = $filesystem->substring(
     __DIR__ . '/bitrix',
     '$APPLICATION->IncludeComponent(',
     extensions: ['php'],
 );
 
 // Find only component*.php files that contain the substring
-$componentFiles = $searcher->findBySubstring(
+$componentFiles = $filesystem->substring(
     __DIR__ . '/bitrix',
     '$APPLICATION->IncludeComponent(',
     extensions: ['php'],
@@ -166,7 +192,7 @@ $componentFiles = $searcher->findBySubstring(
 );
 
 // Use regex to find calls with arbitrary whitespace
-$regexMatches = $searcher->findByRegex(
+$regexMatches = $filesystem->regex(
     __DIR__ . '/bitrix',
     '/\$APPLICATION->IncludeComponent\s*\(/',
     extensions: ['php'],

@@ -22,7 +22,7 @@ class PhpClassFinder
      *
      * @return array<int,array<string,mixed>> List of class metadata arrays.
      */
-    public function findByExtends(string $directory, string $baseClassFqcn): array
+    public function extends(string $directory, string $baseClassFqcn): array
     {
         $target = $this->normalizeClassName($baseClassFqcn);
         $results = [];
@@ -45,7 +45,7 @@ class PhpClassFinder
      *
      * @return array<int,array<string,mixed>> List of class metadata arrays.
      */
-    public function findByImplements(string $directory, string $interfaceFqcn): array
+    public function implements(string $directory, string $interfaceFqcn): array
     {
         $target = $this->normalizeClassName($interfaceFqcn);
         $results = [];
@@ -56,6 +56,32 @@ class PhpClassFinder
 
                 foreach ($implements as $impl) {
                     if ($this->normalizeClassName($impl) === $target) {
+                        $results[] = $classInfo;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Find classes that use the given trait.
+     *
+     * @return array<int,array<string,mixed>> List of class metadata arrays.
+     */
+    public function hasTrait(string $directory, string $traitFqcn): array
+    {
+        $target = $this->normalizeClassName($traitFqcn);
+        $results = [];
+
+        foreach ($this->phpFilesIn($directory) as $file) {
+            foreach ($this->parseFile($file) as $classInfo) {
+                $traits = $classInfo['traits'] ?? [];
+
+                foreach ($traits as $trait) {
+                    if ($this->normalizeClassName($trait) === $target) {
                         $results[] = $classInfo;
                         break;
                     }
@@ -108,13 +134,17 @@ class PhpClassFinder
 
             // class / interface
             if (is_array($token) && ($token[0] === T_CLASS || $token[0] === T_INTERFACE)) {
-                // пропускаем анонимные классы (class (...) )
                 [$shortName, $i] = $this->parseClassName($tokens, $i + 1, $count);
                 if ($shortName === null) {
                     continue;
                 }
 
                 [$extends, $implements, $i] = $this->parseInheritance($tokens, $i, $count, $namespace);
+
+                $traits = [];
+                if ($token[0] === T_CLASS) {
+                    [$traits, $i] = $this->parseTraitsInClassBody($tokens, $i, $count, $namespace);
+                }
 
                 $fqcn = $this->buildFqcn($shortName, $namespace);
 
@@ -125,6 +155,7 @@ class PhpClassFinder
                     'short_name' => $shortName,
                     'extends'    => $extends,
                     'implements' => $implements,
+                    'traits'     => $traits,
                 ];
 
                 continue;
@@ -276,6 +307,119 @@ class PhpClassFinder
         }
 
         return [$extends, $implements, $index];
+    }
+
+    /**
+     * Parse trait use list right after class opening brace (use Trait1, Trait2;).
+     *
+     * @param array<int,mixed> $tokens
+     *
+     * @return array{0: array<int,string>, 1: int}
+     */
+    private function parseTraitsInClassBody(array $tokens, int $index, int $count, string $namespace): array
+    {
+        $traits = [];
+
+        while ($index < $count) {
+            $token = $tokens[$index];
+
+            if (is_array($token) && $token[0] === T_WHITESPACE) {
+                $index++;
+                continue;
+            }
+
+            if (is_array($token) && $token[0] === T_USE) {
+                $index++;
+
+                while ($index < $count) {
+                    $t = $tokens[$index];
+
+                    if (is_array($t) && $t[0] === T_WHITESPACE) {
+                        $index++;
+                        continue;
+                    }
+
+                    if (!is_array($t) && $t === ';') {
+                        $index++;
+                        break 2;
+                    }
+
+                    if (!is_array($t) && $t === '{') {
+                        $index = $this->skipBalancedBraces($tokens, $index, $count);
+                        continue;
+                    }
+
+                    if (is_array($t) && ($t[0] === T_FUNCTION || $t[0] === T_CONST)) {
+                        $index = $this->skipUntilSemicolon($tokens, $index, $count);
+                        break;
+                    }
+
+                    [$name, $index] = $this->collectQualifiedName($tokens, $index, $count);
+                    if ($name !== '') {
+                        $traits[] = $this->buildFqcn($name, $namespace);
+                    }
+
+                    $t = $index < $count ? $tokens[$index] : null;
+                    if (!is_array($t) && $t === ',') {
+                        $index++;
+                    }
+                }
+                continue;
+            }
+
+            if (!is_array($token) && $token === '}') {
+                break;
+            }
+
+            $index++;
+        }
+
+        return [$traits, $index];
+    }
+
+    /**
+     * Skip from opening '{' to the matching '}'.
+     *
+     * @param array<int,mixed> $tokens
+     */
+    private function skipBalancedBraces(array $tokens, int $index, int $count): int
+    {
+        $depth = 0;
+
+        while ($index < $count) {
+            $t = $tokens[$index];
+
+            if (!is_array($t)) {
+                if ($t === '{') {
+                    $depth++;
+                } elseif ($t === '}') {
+                    $depth--;
+                    if ($depth === 0) {
+                        return $index + 1;
+                    }
+                }
+            }
+
+            $index++;
+        }
+
+        return $index;
+    }
+
+    /**
+     * Advance index until after the next semicolon.
+     *
+     * @param array<int,mixed> $tokens
+     */
+    private function skipUntilSemicolon(array $tokens, int $index, int $count): int
+    {
+        while ($index < $count) {
+            if (!is_array($tokens[$index]) && $tokens[$index] === ';') {
+                return $index + 1;
+            }
+            $index++;
+        }
+        return $index;
     }
 
     /**

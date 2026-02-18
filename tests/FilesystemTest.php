@@ -55,18 +55,18 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $data = ['a' => 1, 'b' => 2];
         $fs->putJson($path, $data);
 
-        $decoded = $fs->getJson($path, true);
+        $decoded = $fs->json($path, true);
         $this->assertSame($data, $decoded);
 
         $default = ['default' => true];
-        $this->assertSame($default, $fs->getJsonOrDefault('missing.json', $default));
+        $this->assertSame($default, $fs->json('missing.json', true, $default));
 
         $fs->updateJson($path, static function (array $config): array {
             $config['c'] = 3;
             return $config;
         });
 
-        $updated = $fs->getJson($path, true);
+        $updated = $fs->json($path, true);
         $this->assertSame(['a' => 1, 'b' => 2, 'c' => 3], $updated);
     }
 
@@ -140,7 +140,70 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs->put($path, '{invalid json');
 
         $this->expectException(IOException::class);
-        $fs->getJson($path, true);
+        $fs->json($path, true);
+    }
+
+    public function testContentAndUpdateContent(): void
+    {
+        $fs = $this->fs();
+        $path = 'log.txt';
+
+        $this->assertSame('', $fs->content($path, ''));
+        $this->assertSame('fallback', $fs->content('missing.txt', 'fallback'));
+
+        $fs->updateContent($path, static fn (string $c) => $c . "line1\n");
+        $fs->updateContent($path, static fn (string $c) => $c . "line2\n");
+
+        $this->assertSame("line1\nline2\n", $fs->content($path));
+    }
+
+    public function testContentMissingFileThrowsWhenNoDefault(): void
+    {
+        $this->expectException(FileNotFoundException::class);
+        $this->fs()->content('missing.txt');
+    }
+
+    public function testFileReturnsFileNode(): void
+    {
+        $fs = $this->fs();
+        $fs->put('info.txt', 'hello');
+
+        $file = $fs->file('info.txt');
+
+        $this->assertSame(5, $file->size);
+        $this->assertSame('info.txt', $file->filename);
+        $this->assertSame('info', $file->basename);
+        $this->assertSame('txt', $file->extension);
+        $this->assertIsInt($file->lastModified);
+        $this->assertTrue($file->readable);
+    }
+
+    public function testFileThrowsWhenNotAFile(): void
+    {
+        $this->expectException(FileNotFoundException::class);
+        $fs = $this->fs();
+        $fs->makeDirectory('dir');
+        $fs->file('dir');
+    }
+
+    public function testDirectoryReturnsDirectoryNode(): void
+    {
+        $fs = $this->fs();
+        $fs->makeDirectory('data');
+
+        $dir = $fs->directory('data');
+
+        $this->assertNotEmpty($dir->path);
+        $this->assertIsInt($dir->lastModified);
+        $this->assertTrue($dir->readable);
+    }
+
+    public function testDirectoryThrowsWhenNotADirectory(): void
+    {
+        $this->expectException(FileNotFoundException::class);
+        $fs = $this->fs();
+        $fs->put('file.txt', 'x');
+        $fs->directory('file.txt');
     }
 }
 

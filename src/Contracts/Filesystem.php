@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace MB\Filesystem\Contracts;
 
+use MB\Filesystem\Nodes\Directory;
+use MB\Filesystem\Nodes\File;
+
 /**
  * Filesystem abstraction interface.
  *
@@ -100,12 +103,46 @@ interface Filesystem
     /**
      * Read JSON from a file and decode it.
      *
+     * @param array<mixed,mixed>|object|null $default If the file does not exist and this is not null, return it.
+     *
      * @return array<mixed,mixed>|object
      *
-     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the file does not exist.
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the file does not exist and no default was given.
      * @throws \MB\Filesystem\Exceptions\IOException If the file cannot be read or JSON cannot be decoded.
      */
-    public function getJson(string $path, bool $assoc = true): array|object;
+    public function json(string $path, bool $assoc = true, array|object|null $default = null): array|object;
+
+    /**
+     * Read file content, or return default if file does not exist.
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the file does not exist and no default was given.
+     * @throws \MB\Filesystem\Exceptions\IOException If the file cannot be read.
+     */
+    public function content(string $path, ?string $default = null): string;
+
+    /**
+     * Read-modify-write cycle for file content. If file does not exist, updater receives empty string.
+     *
+     * @param callable(string):string $updater
+     *
+     * @throws \MB\Filesystem\Exceptions\IOException On read/write failure.
+     * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to write.
+     */
+    public function updateContent(string $path, callable $updater): void;
+
+    /**
+     * Get file metadata as a File value object.
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the path is not a file.
+     */
+    public function file(string $path): File;
+
+    /**
+     * Get directory metadata as a Directory value object.
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the path is not a directory.
+     */
+    public function directory(string $path): Directory;
 
     /**
      * Delete one or several files.

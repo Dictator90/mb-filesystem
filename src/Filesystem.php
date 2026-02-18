@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace MB\Filesystem;
 
+use MB\Filesystem\Concerns\ContentSearch;
 use MB\Filesystem\Contracts\Filesystem as FilesystemContract;
 use MB\Filesystem\Exceptions\FileNotFoundException;
 use MB\Filesystem\Exceptions\IOException;
 use MB\Filesystem\Exceptions\PermissionException;
+use MB\Filesystem\Nodes\Directory;
+use MB\Filesystem\Nodes\File;
 use MB\Support\Collection;
 
 /**
@@ -15,6 +18,7 @@ use MB\Support\Collection;
  */
 class Filesystem implements FilesystemContract
 {
+    use ContentSearch;
     /**
      * Base directory that relative paths are resolved against.
      * If null, paths are used as-is.
@@ -233,8 +237,17 @@ class Filesystem implements FilesystemContract
         $this->put($path, $json);
     }
 
-    public function getJson(string $path, bool $assoc = true): array|object
+    public function json(string $path, bool $assoc = true, array|object|null $default = null): array|object
     {
+        $fullPath = $this->resolvePath($path);
+
+        if (!file_exists($fullPath) || !is_file($fullPath)) {
+            if ($default !== null) {
+                return $default;
+            }
+            throw new FileNotFoundException($fullPath);
+        }
+
         $contents = $this->get($path);
 
         $decoded = json_decode($contents, $assoc);
@@ -242,7 +255,7 @@ class Filesystem implements FilesystemContract
             throw new IOException(
                 sprintf(
                     'Unable to decode JSON from file %s: %s',
-                    $this->resolvePath($path),
+                    $fullPath,
                     json_last_error_msg()
                 )
             );
@@ -250,7 +263,7 @@ class Filesystem implements FilesystemContract
 
         if ($assoc) {
             if (!is_array($decoded)) {
-                throw new IOException("Decoded JSON is not an array for file: {$this->resolvePath($path)}");
+                throw new IOException("Decoded JSON is not an array for file: {$fullPath}");
             }
 
             /** @var array<mixed,mixed> $decoded */
@@ -258,49 +271,107 @@ class Filesystem implements FilesystemContract
         }
 
         if (!is_object($decoded)) {
-            throw new IOException("Decoded JSON is not an object for file: {$this->resolvePath($path)}");
+            throw new IOException("Decoded JSON is not an object for file: {$fullPath}");
         }
 
         /** @var object $decoded */
         return $decoded;
     }
 
-    /**
-     * Читает JSON, возвращая значение по умолчанию, если файл отсутствует.
-     *
-     * @param array<mixed,mixed> $default
-     *
-     * @return array<mixed,mixed>
-     */
-    public function getJsonOrDefault(string $path, array $default = []): array
+    public function content(string $path, ?string $default = null): string
     {
         $fullPath = $this->resolvePath($path);
 
-        if (!file_exists($fullPath)) {
-            return $default;
+        if (!file_exists($fullPath) || !is_file($fullPath)) {
+            if ($default !== null) {
+                return $default;
+            }
+            throw new FileNotFoundException($fullPath);
         }
 
-        $value = $this->getJson($path, true);
+        return $this->get($path);
+    }
 
-        if (!is_array($value)) {
-            throw new IOException("Decoded JSON is not an array for file: {$fullPath}");
+    public function updateContent(string $path, callable $updater): void
+    {
+        $current = '';
+        try {
+            $current = $this->get($path);
+        } catch (FileNotFoundException) {
+            // pass empty string to updater
         }
 
-        /** @var array<mixed,mixed> $value */
-        return $value;
+        $newContent = $updater($current);
+        if (!is_string($newContent)) {
+            throw new IOException('Content updater must return a string.');
+        }
+
+        $this->putAtomic($path, $newContent);
+    }
+
+    public function file(string $path): File
+    {
+        $fullPath = $this->resolvePath($path);
+
+        if (!is_file($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        $size = @filesize($fullPath);
+        if ($size === false) {
+            throw new IOException("Unable to get size of file: {$fullPath}");
+        }
+
+        $mtime = @filemtime($fullPath);
+        if ($mtime === false) {
+            throw new IOException("Unable to get last modified time of file: {$fullPath}");
+        }
+
+        return new File(
+            path: $fullPath,
+            size: $size,
+            lastModified: $mtime,
+            extension: pathinfo($fullPath, PATHINFO_EXTENSION),
+            basename: pathinfo($fullPath, PATHINFO_FILENAME),
+            filename: basename($fullPath),
+            dirname: \dirname($fullPath),
+            readable: is_readable($fullPath),
+            writable: is_writable($fullPath),
+        );
+    }
+
+    public function directory(string $path): Directory
+    {
+        $fullPath = $this->resolvePath($path);
+
+        if (!is_dir($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        $mtime = @filemtime($fullPath);
+        if ($mtime === false) {
+            $mtime = 0;
+        }
+
+        return new Directory(
+            path: $fullPath,
+            lastModified: $mtime,
+            readable: is_readable($fullPath),
+            writable: is_writable($fullPath),
+        );
     }
 
     /**
-     * Осуществляет read-modify-write цикл над JSON-файлом.
+     * Read-modify-write cycle for a JSON file. Missing file is treated as empty array.
      *
      * @param callable(array<mixed,mixed>):array<mixed,mixed> $updater
      */
     public function updateJson(string $path, callable $updater): void
     {
-        try {
-            $data = $this->getJsonOrDefault($path, []);
-        } catch (FileNotFoundException) {
-            $data = [];
+        $data = $this->json($path, true, []);
+
+        if (!is_array($data)) {
+            throw new IOException('JSON file did not decode to an array.');
         }
 
         $newData = $updater($data);

@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use MB\Filesystem\Filesystem;
-use MB\Filesystem\Finder\ContentFinder;
 
 final class ContentSearcherTest extends \PHPUnit\Framework\TestCase
 {
@@ -26,12 +25,7 @@ final class ContentSearcherTest extends \PHPUnit\Framework\TestCase
         return new Filesystem();
     }
 
-    private function makeSearcher(): ContentFinder
-    {
-        return new ContentFinder($this->makeFilesystem());
-    }
-
-    public function testFindBySubstringPhpOnly(): void
+    public function testSubstringPhpOnly(): void
     {
         $fs = $this->makeFilesystem();
 
@@ -46,15 +40,13 @@ final class ContentSearcherTest extends \PHPUnit\Framework\TestCase
         $fs->put($phpFile, "<?php\n{$needle} 'some:component';\n");
         $fs->put($txtFile, "This is a text file with {$needle} inside\n");
 
-        $searcher = $this->makeSearcher();
-
-        $result = $searcher->findBySubstring($dir, $needle);
+        $result = $fs->substring($dir, $needle);
 
         $this->assertContains($phpFile, $result);
         $this->assertNotContains($txtFile, $result, 'Non-PHP files should be ignored by default.');
     }
 
-    public function testFindBySubstringWithFilenameMask(): void
+    public function testSubstringWithFilenameMask(): void
     {
         $fs = $this->makeFilesystem();
 
@@ -71,9 +63,7 @@ final class ContentSearcherTest extends \PHPUnit\Framework\TestCase
         $fs->put($componentOther, "<?php\n// no include here\n");
         $fs->put($unrelated, "<?php\n{$needle} 'vendor:other';\n");
 
-        $searcher = $this->makeSearcher();
-
-        $result = $searcher->findBySubstring(
+        $result = $fs->substring(
             $dir,
             $needle,
             extensions: ['php'],
@@ -85,7 +75,7 @@ final class ContentSearcherTest extends \PHPUnit\Framework\TestCase
         $this->assertNotContains($unrelated, $result, 'File not matching filename mask should be excluded.');
     }
 
-    public function testFindByRegex(): void
+    public function testRegex(): void
     {
         $fs = $this->makeFilesystem();
 
@@ -100,12 +90,9 @@ final class ContentSearcherTest extends \PHPUnit\Framework\TestCase
 
         $pattern = '/\$APPLICATION->IncludeComponent\s*\(/';
 
-        $searcher = $this->makeSearcher();
-
-        $result = $searcher->findByRegex($dir, $pattern);
+        $result = $fs->regex($dir, $pattern);
 
         $this->assertContains($file1, $result);
         $this->assertContains($file2, $result, 'Regex currently matches even inside comments (by design).');
     }
 }
-

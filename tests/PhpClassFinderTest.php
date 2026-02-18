@@ -75,7 +75,7 @@ PHP);
 
         $finder = $this->finder();
 
-        $results = $finder->findByExtends($this->tmpDir, 'App\BaseClass');
+        $results = $finder->extends($this->tmpDir, 'App\BaseClass');
 
         $classes = array_column($results, 'class');
 
@@ -139,12 +139,64 @@ PHP);
 
         $finder = $this->finder();
 
-        $results = $finder->findByImplements($this->tmpDir, 'App\MyInterface');
+        $results = $finder->implements($this->tmpDir, 'App\MyInterface');
         $classes = array_column($results, 'class');
 
         $this->assertContains('App\Impl\First', $classes);
         $this->assertContains('App\Impl\Second', $classes);
         $this->assertNotContains('App\Impl\Plain', $classes);
+    }
+
+    public function testHasTrait(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/WithTrait');
+
+        $fs->put('src/MyTrait.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App;
+
+trait MyTrait
+{
+}
+PHP);
+
+        $fs->put('src/WithTrait/User.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\WithTrait;
+
+class User
+{
+    use \App\MyTrait;
+}
+PHP);
+
+        $fs->put('src/WithTrait/Plain.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\WithTrait;
+
+class Plain
+{
+}
+PHP);
+
+        $finder = $this->finder();
+
+        $results = $finder->hasTrait($this->tmpDir, 'App\MyTrait');
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\WithTrait\User', $classes);
+        $this->assertNotContains('App\WithTrait\Plain', $classes);
     }
 }
 

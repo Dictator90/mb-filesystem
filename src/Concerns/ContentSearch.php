@@ -2,49 +2,38 @@
 
 declare(strict_types=1);
 
-namespace MB\Filesystem\Finder;
+namespace MB\Filesystem\Concerns;
 
-use MB\Filesystem\Contracts\Filesystem;
 use MB\Filesystem\Exceptions\FileNotFoundException;
-use MB\Filesystem\Exceptions\IOException;
-use MB\Filesystem\Exceptions\PermissionException;
 
 /**
- * Utility for searching files by their contents.
+ * Trait for content-based file search (substring and regex).
+ *
+ * Requires the using class to implement: files(string $directory, bool $recursive), get(string $path).
  */
-class ContentFinder
+trait ContentSearch
 {
-    public function __construct(
-        private readonly Filesystem $filesystem,
-    ) {
-    }
-
     /**
      * Find all files under the given directory that contain the given substring.
      *
-     * @param string        $directory     Root directory to scan (recursively).
-     * @param string        $needle        Substring to search for.
-     * @param array<string> $extensions    File extensions (without dot) to include, defaults to ['php'].
-     * @param string|null   $filenameMask  Optional filename mask (fnmatch pattern), applied to basename.
+     * @param array<string> $extensions   File extensions (without dot) to include, defaults to ['php'].
+     * @param string|null   $filenameMask Optional filename mask (fnmatch pattern), applied to basename.
      *
      * @return array<int,string> List of file paths containing the substring.
-     *
-     * @throws IOException|PermissionException On directory traversal errors.
      */
-    public function findBySubstring(
+    public function substring(
         string $directory,
         string $needle,
         array $extensions = ['php'],
         ?string $filenameMask = null,
     ): array {
-        $candidates = $this->collectCandidateFiles($directory, $extensions, $filenameMask);
+        $candidates = $this->collectContentSearchCandidates($directory, $extensions, $filenameMask);
         $matches = [];
 
         foreach ($candidates as $path) {
             try {
-                $contents = $this->filesystem->get($path);
+                $contents = $this->get($path);
             } catch (FileNotFoundException) {
-                // File was removed between listing and reading – skip it.
                 continue;
             }
 
@@ -57,19 +46,16 @@ class ContentFinder
     }
 
     /**
-     * Find all files under the given directory that match a regular expression.
+     * Find all files under the given directory whose content matches the given PCRE pattern.
      *
-     * @param string        $directory     Root directory to scan (recursively).
-     * @param string        $pattern       PCRE pattern.
-     * @param array<string> $extensions    File extensions (without dot) to include, defaults to ['php'].
-     * @param string|null   $filenameMask  Optional filename mask (fnmatch pattern), applied to basename.
+     * @param array<string> $extensions   File extensions (without dot) to include, defaults to ['php'].
+     * @param string|null   $filenameMask Optional filename mask (fnmatch pattern), applied to basename.
      *
      * @return array<int,string> List of file paths matching the pattern.
      *
-     * @throws IOException|PermissionException On directory traversal errors.
-     * @throws \InvalidArgumentException       If the provided pattern is invalid.
+     * @throws \InvalidArgumentException If the pattern is invalid.
      */
-    public function findByRegex(
+    public function regex(
         string $directory,
         string $pattern,
         array $extensions = ['php'],
@@ -77,12 +63,12 @@ class ContentFinder
     ): array {
         $this->assertValidRegex($pattern);
 
-        $candidates = $this->collectCandidateFiles($directory, $extensions, $filenameMask);
+        $candidates = $this->collectContentSearchCandidates($directory, $extensions, $filenameMask);
         $matches = [];
 
         foreach ($candidates as $path) {
             try {
-                $contents = $this->filesystem->get($path);
+                $contents = $this->get($path);
             } catch (FileNotFoundException) {
                 continue;
             }
@@ -102,20 +88,16 @@ class ContentFinder
     }
 
     /**
-     * Collect candidate files under the given directory, filtered by extension and optional filename mask.
-     *
      * @param array<string> $extensions
      *
      * @return array<int,string>
-     *
-     * @throws IOException|PermissionException
      */
-    private function collectCandidateFiles(
+    private function collectContentSearchCandidates(
         string $directory,
         array $extensions,
         ?string $filenameMask,
     ): array {
-        $allFiles = $this->filesystem->files($directory, true);
+        $allFiles = $this->files($directory, true);
 
         $normalizedExtensions = array_values(
             array_filter(
@@ -146,11 +128,6 @@ class ContentFinder
         ));
     }
 
-    /**
-     * Validate a regex pattern and throw early if invalid.
-     *
-     * @throws \InvalidArgumentException
-     */
     private function assertValidRegex(string $pattern): void
     {
         $result = @preg_match($pattern, '');
@@ -162,4 +139,3 @@ class ContentFinder
         }
     }
 }
-
