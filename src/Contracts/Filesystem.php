@@ -6,6 +6,7 @@ namespace MB\Filesystem\Contracts;
 
 use MB\Filesystem\Nodes\Directory;
 use MB\Filesystem\Nodes\File;
+use MB\Filesystem\Nodes\Link;
 
 /**
  * Filesystem abstraction interface.
@@ -31,7 +32,7 @@ interface Filesystem
      * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the file does not exist.
      * @throws \MB\Filesystem\Exceptions\IOException If the file cannot be read.
      */
-    public function get(string $path): string;
+    public function get(string $path): File|Directory|Link;
 
     /**
      * Require a PHP file and return its result.
@@ -157,13 +158,22 @@ interface Filesystem
     public function delete(string|array $paths): void;
 
     /**
-     * Move a file.
+     * Move or rename a file, directory, or symlink.
      *
-     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the source file does not exist.
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the source does not exist.
      * @throws \MB\Filesystem\Exceptions\IOException If the move operation fails.
      * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to write/delete.
      */
     public function move(string $from, string $to): void;
+
+    /**
+     * Rename or move a file, directory, or symlink (same as move).
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the source does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException If the rename operation fails.
+     * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to write/delete.
+     */
+    public function rename(string $from, string $to): void;
 
     /**
      * Copy a file.
@@ -242,4 +252,43 @@ interface Filesystem
      * @throws \MB\Filesystem\Exceptions\IOException If the directory cannot be read.
      */
     public function directories(string $directory, bool $recursive = false): array;
+
+    /**
+     * Check whether the given path is a symbolic link.
+     */
+    public function isLink(string $path): bool;
+
+    /**
+     * Get symlink metadata as a Link node.
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the path is not a symlink.
+     */
+    public function link(string $path): Link;
+
+    /**
+     * List symlinks inside a directory.
+     *
+     * @return array<int,Link>
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the directory does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException If the directory cannot be read.
+     */
+    public function links(string $directory, bool $recursive = false): array;
+
+    /**
+     * Create a symbolic link at linkPath pointing to target.
+     *
+     * Target can be relative (to the directory of linkPath) or absolute. linkPath must not exist.
+     *
+     * @throws \MB\Filesystem\Exceptions\IOException If the link cannot be created (e.g. link path already exists).
+     * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to create the link.
+     */
+    public function createSymlink(string $target, string $linkPath): void;
+
+    /**
+     * Resolve the path to a canonical absolute path (resolve symlinks and . / ..).
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the path does not exist or resolution fails.
+     */
+    public function realPath(string $path): string;
 }

@@ -26,9 +26,9 @@ $filesystem = new Filesystem(__DIR__ . '/storage');
 // Write file
 $filesystem->put('example.txt', 'Hello, world!');
 
-// Read file
+// Read file content
 try {
-    $content = $filesystem->get('example.txt');
+    $content = $filesystem->content('example.txt');
 } catch (FileNotFoundException $e) {
     // file not found
 } catch (IOException $e) {
@@ -82,16 +82,49 @@ $filesystem->updateContent($file, static function (string $current): string {
 });
 ```
 
-## File and Directory (rich nodes)
+## get() — get a node by path
 
-`file()` and `directory()` return rich nodes with metadata and operations. Use them to read, update, or delete without passing the path again.
+`get(string $path)` returns a **node** representing the path — it does **not** return file content. The return type is `File|Directory|Link`:
 
-**File** — metadata: `path`, `size`, `lastModified`, `extension`, `basename`, `filename`, `dirname`, `readable`, `writable`, `mode`. For large files use `lines()` instead of `content()` to avoid loading the whole file into memory.
+- **File** — when the path is a regular file (or a symlink is not followed; use `file()` for a file, `link()` for a symlink).
+- **Directory** — when the path is a directory.
+- **Link** — when the path is a symbolic link (symlink).
+
+Use `content($path)` or `$file->content()` to read file content as a string. Example:
+
+```php
+$node = $filesystem->get('path/to/something');
+
+if ($node instanceof \MB\Filesystem\Nodes\File) {
+    $text = $node->content();
+} elseif ($node instanceof \MB\Filesystem\Nodes\Directory) {
+    $list = $node->files(true);
+} elseif ($node instanceof \MB\Filesystem\Nodes\Link) {
+    $resolved = $node->resolve();  // File|Directory|null
+}
+```
+
+## File, Directory, and Link (nodes)
+
+`file()`, `directory()`, and `link()` return rich nodes with metadata and operations. Use them to read, update, or delete without passing the path again. You can also obtain a node with `get($path)` (see above).
+
+### Node types and main methods
+
+| Node       | Main methods / metadata |
+|-----------|--------------------------|
+| **File**  | `path`, `size`, `lastModified`, `extension`, `basename`, `filename`, `dirname`, `readable`, `writable`, `mode` — `content()`, `lines()`, `line($n)`, `update()`, `write()`, `delete()`, `move()`, `copy()`, `chmod()`, `touch()` |
+| **Directory** | `path`, `lastModified`, `readable`, `writable`, `mode` — `files()`, `directories()`, `create()`, `delete($recursive)`, `chmod()`, `touch()` |
+| **Link**  | `path`, `target`, `isBroken`, `targetType` — `target()`, `isBroken()`, `resolve(): File|Directory|null`, `delete()` |
+
+### File
+
+For large files use `lines()` instead of `content()` to avoid loading the whole file; use `line($lineNumber)` to read a single line by 1-based index.
 
 ```php
 $file = $filesystem->file('path/to/file.txt');
 
 $file->content();           // full content (string)
+$file->line(42);            // 42nd line (1-based)
 foreach ($file->lines() as $i => $line) { /* line-by-line, memory-efficient */ }
 $file->update(fn (string $c) => $c . "\nnew line");  // optional second arg: $atomic = true
 $file->write('new content');
@@ -102,17 +135,46 @@ $file->chmod(0644);
 $file->touch();             // or touch($mtime)
 ```
 
-**Directory** — metadata: `path`, `lastModified`, `readable`, `writable`, `mode`. Delete with optional recursion.
+### Directory
 
 ```php
 $dir = $filesystem->directory('path/to/dir');
 
 $dir->files(true);          // list files, recursive
-$dir->directories(true);    // list subdirs
-$dir->create(0755, true);   // ensure exists
-$dir->delete(true);         // delete recursively
+$dir->directories(true);   // list subdirs
+$dir->create(0755, true);  // ensure exists
+$dir->delete(true);        // delete recursively
 $dir->chmod(0755);
 $dir->touch($mtime);
+```
+
+### Link (symlinks)
+
+Create a symlink with `createSymlink($target, $linkPath)`. Target can be relative (to the link’s directory) or absolute; link path must not exist. Use `isLink($path)` to check, `link($path)` to get a `Link` node. `resolve()` returns the target as `File` or `Directory`, or `null` if the link is broken.
+
+```php
+$filesystem->put('target.txt', 'content');
+$filesystem->createSymlink('target.txt', 'link.txt');  // link path must not exist
+
+if ($filesystem->isLink('my-link')) {
+    $link = $filesystem->link('my-link');
+    $link->target;       // target path
+    $link->isBroken();   // true if target does not exist
+    $resolved = $link->resolve();  // File|Directory|null
+}
+$links = $filesystem->links('dir', true);  // list symlinks, optional recursive
+```
+
+## Move, rename, and real path
+
+`move($from, $to)` and `rename($from, $to)` do the same thing: move or rename a file, directory, or symlink. Both use PHP’s `rename()`; for directories, source and destination must be on the same filesystem.
+
+`realPath($path)` returns the canonical absolute path (symlinks and `..`/`.` resolved). Throws if the path does not exist.
+
+```php
+$filesystem->move('old.txt', 'new.txt');
+$filesystem->rename('olddir', 'newdir');   // rename directory
+$canonical = $filesystem->realPath('config/../logs/app.log');
 ```
 
 ## Directories and recursive operations
@@ -181,14 +243,14 @@ $rel  = $filesystem->relative('/var/www/app', '/var/www'); // app
 
 ## Finding PHP classes by extends/implements/traits
 
-The package provides a `PhpClassFinder` utility that can find classes by base parent, implemented interface, or used trait.
+The package provides a `ClassFinder` utility that can find classes by base parent, implemented interface, or used trait using static token-based parsing (no autoload, no ReflectionClass).
 
 ```php
 use MB\Filesystem\Filesystem;
-use MB\Filesystem\Finder\PhpClassFinder;
+use MB\Filesystem\Finder\ClassFinder;
 
 $filesystem = new Filesystem(); // you can pass basePath if needed
-$finder = new PhpClassFinder($filesystem);
+$finder = new ClassFinder($filesystem);
 
 // Find all classes that extend App\BaseClass
 $byExtends = $finder->extends(__DIR__ . '/src', App\BaseClass::class);

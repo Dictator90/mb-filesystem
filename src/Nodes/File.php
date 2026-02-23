@@ -43,7 +43,7 @@ final class File
      */
     public function content(): string
     {
-        return $this->filesystem->get($this->path);
+        return $this->filesystem->content($this->path);
     }
 
     /**

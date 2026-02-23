@@ -133,7 +133,7 @@ $stats[] = $r;
 // --- Benchmark: get() content (sample) ---
 $r = measure("get() x{$sampleSize}", function () use ($fs, $fileList, $sampleSize) {
     for ($i = 0; $i < $sampleSize; $i++) {
-        $fs->get($fileList[$i]);
+            $fs->content($fileList[$i]);
     }
 });
 $r['count'] = $sampleSize;

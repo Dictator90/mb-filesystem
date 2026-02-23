@@ -27,7 +27,7 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         return new Filesystem($this->tmpDir);
     }
 
-    public function testPutAndGet(): void
+    public function testPutAndGetContent(): void
     {
         $fs = $this->fs();
         $path = 'foo.txt';
@@ -36,15 +36,15 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs->put($path, $content);
 
         $this->assertTrue($fs->existsFile($path));
-        $this->assertSame($content, $fs->get($path));
+        $this->assertSame($content, $fs->content($path));
     }
 
-    public function testGetNonExistingFileThrows(): void
+    public function testContentNonExistingFileThrows(): void
     {
         $this->expectException(FileNotFoundException::class);
 
         $fs = $this->fs();
-        $fs->get('missing.txt');
+        $fs->content('missing.txt');
     }
 
     public function testJsonHelpers(): void
@@ -112,10 +112,10 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs->append($path, 'a');
         $fs->append($path, 'b');
 
-        $this->assertSame('ab', $fs->get($path));
+        $this->assertSame('ab', $fs->content($path));
 
         $fs->putAtomic($path, 'x');
-        $this->assertSame('x', $fs->get($path));
+        $this->assertSame('x', $fs->content($path));
     }
 
     public function testSizeAndLastModified(): void
@@ -212,7 +212,7 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs->put('log.txt', 'a');
         $file = $fs->file('log.txt');
         $fs->updateContent($file, static fn (string $c) => $c . 'b');
-        $this->assertSame('ab', $fs->get('log.txt'));
+        $this->assertSame('ab', $fs->content('log.txt'));
     }
 
     public function testUpdateContentAtomicTrueOverwritesCorrectly(): void
@@ -220,7 +220,7 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs = $this->fs();
         $fs->put('atomic.txt', 'initial');
         $fs->updateContent('atomic.txt', static fn (string $c) => $c . '-updated', true);
-        $this->assertSame('initial-updated', $fs->get('atomic.txt'));
+        $this->assertSame('initial-updated', $fs->content('atomic.txt'));
     }
 
     public function testUpdateContentAtomicFalseOverwritesCorrectly(): void
@@ -228,7 +228,7 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs = $this->fs();
         $fs->put('nonatomic.txt', 'initial');
         $fs->updateContent('nonatomic.txt', static fn (string $c) => $c . '-updated', false);
-        $this->assertSame('initial-updated', $fs->get('nonatomic.txt'));
+        $this->assertSame('initial-updated', $fs->content('nonatomic.txt'));
     }
 
     public function testFileUpdateAcceptsAtomicParameter(): void
@@ -237,7 +237,7 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $fs->put('node.txt', 'x');
         $file = $fs->file('node.txt');
         $file->update(static fn (string $c) => $c . 'y', false);
-        $this->assertSame('xy', $fs->get('node.txt'));
+        $this->assertSame('xy', $fs->content('node.txt'));
     }
 
     public function testFileNodeContentAndLinesAndUpdate(): void
@@ -255,7 +255,21 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $this->assertSame('line3', $lines[2]);
 
         $file->update(static fn (string $c) => $c . "\nline4");
-        $this->assertStringEndsWith('line4', $fs->get('lines.txt'));
+        $this->assertStringEndsWith('line4', $fs->content('lines.txt'));
+
+    }
+
+    public function testGetReturnsFileOrDirectoryNodes(): void
+    {
+        $fs = $this->fs();
+        $fs->put('node.txt', 'x');
+        $fs->makeDirectory('dir');
+
+        $fileNode = $fs->get('node.txt');
+        $dirNode = $fs->get('dir');
+
+        $this->assertInstanceOf(\MB\Filesystem\Nodes\File::class, $fileNode);
+        $this->assertInstanceOf(\MB\Filesystem\Nodes\Directory::class, $dirNode);
     }
 
     public function testFileNodeLineByNumber(): void
@@ -336,6 +350,124 @@ final class FilesystemTest extends \PHPUnit\Framework\TestCase
         $this->assertCount(1, $dir->files());
         $dir->delete(true);
         $this->assertFalse($fs->exists('dir'));
+    }
+
+    public function testSymlinkHelpersAndLinkNode(): void
+    {
+        $fs = $this->fs();
+
+        // Create target file and symlink (skip on platforms without symlink support)
+        $targetPath = $this->tmpDir . DIRECTORY_SEPARATOR . 'target.txt';
+        $linkPath = $this->tmpDir . DIRECTORY_SEPARATOR . 'link.txt';
+
+        file_put_contents($targetPath, 'hello');
+
+        if (!function_exists('symlink')) {
+            $this->markTestSkipped('Symlinks are not supported on this platform.');
+        }
+
+        // @ is to avoid warnings on Windows without privileges
+        if (!@symlink($targetPath, $linkPath)) {
+            $this->markTestSkipped('Unable to create symlink (insufficient privileges?).');
+        }
+
+        $relativeTarget = 'target.txt';
+        $relativeLink = 'link.txt';
+
+        $this->assertTrue($fs->isLink($relativeLink));
+
+        $linkNode = $fs->link($relativeLink);
+        $this->assertInstanceOf(\MB\Filesystem\Nodes\Link::class, $linkNode);
+        $this->assertFalse($linkNode->isBroken());
+
+        $resolved = $linkNode->resolve();
+        $this->assertInstanceOf(\MB\Filesystem\Nodes\File::class, $resolved);
+        $this->assertSame('hello', $fs->content($resolved->path));
+
+        $links = $fs->links('.', false);
+        $this->assertNotEmpty($links);
+    }
+
+    public function testCreateSymlink(): void
+    {
+        $fs = $this->fs();
+        $fs->put('target.txt', 'content');
+
+        if (!function_exists('symlink')) {
+            $this->markTestSkipped('Symlinks are not supported on this platform.');
+        }
+
+        try {
+            $fs->createSymlink('target.txt', 'link.txt');
+        } catch (\MB\Filesystem\Exceptions\IOException $e) {
+            $this->markTestSkipped('Unable to create symlink (e.g. insufficient privileges on Windows): ' . $e->getMessage());
+        }
+
+        $this->assertTrue($fs->isLink('link.txt'));
+        $link = $fs->link('link.txt');
+        $this->assertFalse($link->isBroken());
+        $resolved = $link->resolve();
+        $this->assertInstanceOf(\MB\Filesystem\Nodes\File::class, $resolved);
+        $this->assertSame('content', $fs->content('link.txt'));
+    }
+
+    public function testCreateSymlinkFailsWhenLinkPathExists(): void
+    {
+        $fs = $this->fs();
+        $fs->put('existing.txt', 'x');
+
+        if (!function_exists('symlink')) {
+            $this->markTestSkipped('Symlinks are not supported on this platform.');
+        }
+
+        $this->expectException(\MB\Filesystem\Exceptions\IOException::class);
+        $this->expectExceptionMessage('already exists');
+        $fs->createSymlink('target.txt', 'existing.txt');
+    }
+
+    public function testMoveDirectory(): void
+    {
+        $fs = $this->fs();
+        $fs->makeDirectory('olddir');
+        $fs->put('olddir/file.txt', 'data');
+        $fs->move('olddir', 'newdir');
+        $this->assertFalse($fs->exists('olddir'));
+        $this->assertTrue($fs->exists('newdir'));
+        $this->assertSame('data', $fs->content('newdir/file.txt'));
+    }
+
+    public function testRenameFile(): void
+    {
+        $fs = $this->fs();
+        $fs->put('old.txt', 'text');
+        $fs->rename('old.txt', 'new.txt');
+        $this->assertFalse($fs->exists('old.txt'));
+        $this->assertSame('text', $fs->content('new.txt'));
+    }
+
+    public function testRenameDirectory(): void
+    {
+        $fs = $this->fs();
+        $fs->makeDirectory('oldname');
+        $fs->put('oldname/a.txt', 'a');
+        $fs->rename('oldname', 'newname');
+        $this->assertFalse($fs->exists('oldname'));
+        $this->assertSame('a', $fs->content('newname/a.txt'));
+    }
+
+    public function testRealPath(): void
+    {
+        $fs = $this->fs();
+        $fs->put('file.txt', 'x');
+        $real = $fs->realPath('file.txt');
+        $this->assertNotEmpty($real);
+        $this->assertStringEndsWith('file.txt', $real);
+    }
+
+    public function testRealPathMissingThrows(): void
+    {
+        $this->expectException(FileNotFoundException::class);
+        $this->fs()->realPath('nonexistent.txt');
     }
 }
 

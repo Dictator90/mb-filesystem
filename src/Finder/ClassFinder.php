@@ -8,9 +8,12 @@ use MB\Filesystem\Contracts\Filesystem;
 use MB\Support\Collection;
 
 /**
- * Searches PHP classes by extends/implements in a given directory tree.
+ * Searches PHP classes by extends/implements/traits in a given directory tree using static token parsing.
+ *
+ * This avoids loading classes (no ReflectionClass/autoload), which makes bulk scans over many files
+ * faster and free from side effects.
  */
-class PhpClassFinder
+class ClassFinder
 {
     public function __construct(
         private readonly Filesystem $filesystem,
@@ -114,13 +117,14 @@ class PhpClassFinder
      */
     private function parseFile(string $path): array
     {
-        $code = $this->filesystem->get($path);
+        $code = $this->filesystem->content($path);
         $tokens = token_get_all($code);
 
         $namespace = '';
         $classes = [];
 
         $count = count($tokens);
+        $useMap = $this->parseFileLevelUseStatements($tokens, $count);
         $i = 0;
 
         while ($i < $count) {
@@ -139,14 +143,14 @@ class PhpClassFinder
                     continue;
                 }
 
-                [$extends, $implements, $i] = $this->parseInheritance($tokens, $i, $count, $namespace);
+                [$extends, $implements, $i] = $this->parseInheritance($tokens, $i, $count, $namespace, $useMap);
 
                 $traits = [];
                 if ($token[0] === T_CLASS) {
-                    [$traits, $i] = $this->parseTraitsInClassBody($tokens, $i, $count, $namespace);
+                    [$traits, $i] = $this->parseTraitsInClassBody($tokens, $i, $count, $namespace, $useMap);
                 }
 
-                $fqcn = $this->buildFqcn($shortName, $namespace);
+                $fqcn = $this->buildFqcn($shortName, $namespace, $useMap);
 
                 $classes[] = [
                     'class'      => $fqcn,
@@ -249,7 +253,7 @@ class PhpClassFinder
      *
      * @return array{0: ?string,1: array<int,string>,2: int}
      */
-    private function parseInheritance(array $tokens, int $index, int $count, string $namespace): array
+    private function parseInheritance(array $tokens, int $index, int $count, string $namespace, array $useMap = []): array
     {
         $extends = null;
         $implements = [];
@@ -268,7 +272,7 @@ class PhpClassFinder
                 if ($id === T_EXTENDS) {
                     [$name, $index] = $this->collectQualifiedName($tokens, $index + 1, $count);
                     if ($name !== '') {
-                        $extends = $this->buildFqcn($name, $namespace);
+                        $extends = $this->buildFqcn($name, $namespace, $useMap);
                     }
                     continue;
                 }
@@ -295,7 +299,7 @@ class PhpClassFinder
 
                         [$name, $index] = $this->collectQualifiedName($tokens, $index, $count);
                         if ($name !== '') {
-                            $implements[] = $this->buildFqcn($name, $namespace);
+                            $implements[] = $this->buildFqcn($name, $namespace, $useMap);
                         }
                     }
 
@@ -316,7 +320,7 @@ class PhpClassFinder
      *
      * @return array{0: array<int,string>, 1: int}
      */
-    private function parseTraitsInClassBody(array $tokens, int $index, int $count, string $namespace): array
+    private function parseTraitsInClassBody(array $tokens, int $index, int $count, string $namespace, array $useMap = []): array
     {
         $traits = [];
 
@@ -356,7 +360,7 @@ class PhpClassFinder
 
                     [$name, $index] = $this->collectQualifiedName($tokens, $index, $count);
                     if ($name !== '') {
-                        $traits[] = $this->buildFqcn($name, $namespace);
+                        $traits[] = $this->buildFqcn($name, $namespace, $useMap);
                     }
 
                     $t = $index < $count ? $tokens[$index] : null;
@@ -423,6 +427,159 @@ class PhpClassFinder
     }
 
     /**
+     * Parse file-level use statements (short name or alias => FQCN).
+     *
+     * @param array<int,mixed> $tokens
+     * @return array<string,string>
+     */
+    private function parseFileLevelUseStatements(array $tokens, int $count): array
+    {
+        $uses  = [];
+        $depth = 0;
+
+        for ($i = 0; $i < $count; $i++) {
+            $token = $tokens[$i];
+
+            if (!is_array($token)) {
+                if ($token === '{') {
+                    $depth++;
+                } elseif ($token === '}') {
+                    $depth = max(0, $depth - 1);
+                }
+                continue;
+            }
+
+            if ($depth !== 0) {
+                continue;
+            }
+
+            if ($token[0] !== T_USE) {
+                continue;
+            }
+
+            $i++;
+
+            // Skip whitespace
+            while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                $i++;
+            }
+
+            if ($i >= $count) {
+                break;
+            }
+
+            // Group use: use Foo\Bar\{A, B as C};
+            if (!is_array($tokens[$i]) && $tokens[$i] === '{') {
+                // Unexpected form, skip; we don't expect leading '{' without base namespace.
+                continue;
+            }
+
+            // Collect base namespace (for group use or simple use)
+            [$base, $i] = $this->collectQualifiedName($tokens, $i, $count);
+            if ($base === '') {
+                continue;
+            }
+
+            $baseTrimmed = rtrim($base, '\\');
+
+            // Skip whitespace
+            while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                $i++;
+            }
+
+            if ($i < $count && !is_array($tokens[$i]) && $tokens[$i] === '{') {
+                // Group use
+                $i++;
+                while ($i < $count) {
+                    // Skip whitespace
+                    while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                        $i++;
+                    }
+                    if ($i >= $count) {
+                        break;
+                    }
+
+                    if (!is_array($tokens[$i]) && $tokens[$i] === '}') {
+                        $i++;
+                        break;
+                    }
+
+                    // Name part (e.g. A or B)
+                    [$namePart, $i] = $this->collectQualifiedName($tokens, $i, $count);
+                    if ($namePart === '') {
+                        break;
+                    }
+
+                    $alias = $namePart;
+
+                    // Skip whitespace
+                    while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                        $i++;
+                    }
+
+                    // Optional \"as Alias\"
+                    if ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_AS) {
+                        $i++;
+                        while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                            $i++;
+                        }
+                        if ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_STRING) {
+                            $alias = $tokens[$i][1];
+                            $i++;
+                        }
+                    }
+
+                    $fqcn          = $baseTrimmed . '\\\\' . $namePart;
+                    $uses[$alias] = ltrim($fqcn, '\\\\');
+
+                    // Move past comma or end of group
+                    while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                        $i++;
+                    }
+                    if ($i < $count && !is_array($tokens[$i]) && $tokens[$i] === ',') {
+                        $i++;
+                        continue;
+                    }
+                }
+
+                // Skip until semicolon
+                while ($i < $count && (!is_array($tokens[$i]) || $tokens[$i] !== ';')) {
+                    if (!is_array($tokens[$i]) && $tokens[$i] === ';') {
+                        break;
+                    }
+                    $i++;
+                }
+
+                continue;
+            }
+
+            // Simple use: use Foo\Bar\Baz; or with alias: use Foo\Bar\Baz as Alias;
+            $alias = $baseTrimmed !== '' ? basename(str_replace('\\\\', '/', $baseTrimmed)) : '';
+
+            // Skip whitespace
+            while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                $i++;
+            }
+
+            if ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_AS) {
+                $i++;
+                while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
+                    $i++;
+                }
+                if ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_STRING) {
+                    $alias = $tokens[$i][1];
+                }
+            }
+
+            if ($alias !== '') {
+                $uses[$alias] = ltrim($baseTrimmed, '\\\\');
+            }
+        }
+
+        return $uses;
+    }
+
+    /**
      * Collect a qualified name (with namespace separators).
      *
      * @param array<int,mixed> $tokens
@@ -462,9 +619,11 @@ class PhpClassFinder
     }
 
     /**
-     * Build a FQCN taking current namespace into account.
+     * Build a FQCN taking current namespace and file-level use imports into account.
+     *
+     * @param array<string,string> $useMap short name or alias => FQCN (without leading backslash)
      */
-    private function buildFqcn(string $name, string $namespace): string
+    private function buildFqcn(string $name, string $namespace, array $useMap = []): string
     {
         $original = $name;
         $trimmed  = ltrim($name, '\\');
@@ -473,16 +632,31 @@ class PhpClassFinder
             return '';
         }
 
-        // Полностью квалифицированное имя (начинается с \) — не дополняем namespace.
+        // Fully-qualified name (starts with \) — do not prepend namespace.
         if (str_starts_with($original, '\\')) {
             return $trimmed;
         }
 
-        if ($namespace === '') {
-            return $trimmed;
+        // Simple name without namespace separators: try use-import first.
+        if (!str_contains($trimmed, '\\')) {
+            if (isset($useMap[$trimmed])) {
+                return ltrim($useMap[$trimmed], '\\');
+            }
+
+            return $namespace === '' ? $trimmed : $namespace . '\\' . $trimmed;
         }
 
-        return $namespace . '\\' . $trimmed;
+        // Relative name with namespace separators: resolve first segment via use-import if present.
+        $parts = explode('\\', $trimmed, 2);
+        $first = $parts[0];
+        $rest  = $parts[1] ?? '';
+
+        if (isset($useMap[$first])) {
+            $base = rtrim(ltrim($useMap[$first], '\\'), '\\');
+            return $rest === '' ? $base : $base . '\\' . $rest;
+        }
+
+        return $namespace === '' ? $trimmed : $namespace . '\\' . $trimmed;
     }
 
     /**

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use MB\Filesystem\Finder\PhpClassFinder;
+use MB\Filesystem\Finder\ClassFinder;
 use MB\Filesystem\Filesystem;
 
 final class PhpClassFinderTest extends \PHPUnit\Framework\TestCase
@@ -26,9 +26,9 @@ final class PhpClassFinderTest extends \PHPUnit\Framework\TestCase
         return new Filesystem($this->tmpDir);
     }
 
-    private function finder(): PhpClassFinder
+    private function finder(): ClassFinder
     {
-        return new PhpClassFinder($this->fs());
+        return new ClassFinder($this->fs());
     }
 
     public function testFindByExtends(): void
@@ -68,7 +68,9 @@ declare(strict_types=1);
 
 namespace App\Sub;
 
-class ChildTwo extends \App\BaseClass
+use \App\BaseClass;
+
+class ChildTwo extends BaseClass
 {
 }
 PHP);
@@ -108,7 +110,9 @@ declare(strict_types=1);
 
 namespace App\Impl;
 
-class First implements \App\MyInterface
+use App\MyInterface;
+
+class First implements MyInterface
 {
 }
 PHP);
@@ -145,6 +149,95 @@ PHP);
         $this->assertContains('App\Impl\First', $classes);
         $this->assertContains('App\Impl\Second', $classes);
         $this->assertNotContains('App\Impl\Plain', $classes);
+    }
+
+    public function testUseImportsForExtendsAndImplementsWithAlias(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/UseImports');
+
+        $fs->put('src/UseImports/Classes.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\UseImports;
+
+use My\ParentNamespace\ParentClass;
+use My\Interfaces\ImportedInterface;
+use My\ParentNamespace\AltParent as BaseParent;
+use My\Interfaces\AltInterface as AliasInterface;
+
+class ChildWithImportedExtends extends ParentClass
+{
+}
+
+class ChildWithAliasExtends extends BaseParent
+{
+}
+
+class ChildWithImportedImplements implements ImportedInterface
+{
+}
+
+class ChildWithAliasImplements implements AliasInterface
+{
+}
+PHP);
+
+        $finder = $this->finder();
+
+        $extendedImported = $finder->extends($this->tmpDir, 'My\ParentNamespace\ParentClass');
+        $extendedAlias    = $finder->extends($this->tmpDir, 'My\ParentNamespace\AltParent');
+        $implementedImported = $finder->implements($this->tmpDir, 'My\Interfaces\ImportedInterface');
+        $implementedAlias    = $finder->implements($this->tmpDir, 'My\Interfaces\AltInterface');
+
+        $extendedImportedClasses    = array_column($extendedImported, 'class');
+        $extendedAliasClasses       = array_column($extendedAlias, 'class');
+        $implementedImportedClasses = array_column($implementedImported, 'class');
+        $implementedAliasClasses    = array_column($implementedAlias, 'class');
+
+        $this->assertContains('App\UseImports\ChildWithImportedExtends', $extendedImportedClasses);
+        $this->assertContains('App\UseImports\ChildWithAliasExtends', $extendedAliasClasses);
+        $this->assertContains('App\UseImports\ChildWithImportedImplements', $implementedImportedClasses);
+        $this->assertContains('App\UseImports\ChildWithAliasImplements', $implementedAliasClasses);
+    }
+
+    public function testFileLevelUseImportsForTraitsWithAlias(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/WithImportedTraits');
+
+        $fs->put('src/WithImportedTraits/Users.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\WithImportedTraits;
+
+use My\Traits\Loggable;
+use My\Traits\Loggable as LogAlias;
+
+class UserWithImportedTrait
+{
+    use Loggable;
+}
+
+class UserWithAliasTrait
+{
+    use LogAlias;
+}
+PHP);
+
+        $finder = $this->finder();
+
+        $results = $finder->hasTrait($this->tmpDir, 'My\Traits\Loggable');
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\WithImportedTraits\UserWithImportedTrait', $classes);
+        $this->assertContains('App\WithImportedTraits\UserWithAliasTrait', $classes);
     }
 
     public function testHasTrait(): void

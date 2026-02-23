@@ -11,6 +11,7 @@ use MB\Filesystem\Exceptions\IOException;
 use MB\Filesystem\Exceptions\PermissionException;
 use MB\Filesystem\Nodes\Directory;
 use MB\Filesystem\Nodes\File;
+use MB\Filesystem\Nodes\Link;
 use MB\Support\Collection;
 
 /**
@@ -35,24 +36,23 @@ class Filesystem implements FilesystemContract
         return file_exists($this->resolvePath($path));
     }
 
-    public function get(string $path): string
+    public function get(string $path): File|Directory|Link
     {
         $fullPath = $this->resolvePath($path);
 
-        if (!is_file($fullPath)) {
-            throw new FileNotFoundException($fullPath);
+        if (is_link($fullPath)) {
+            return $this->link($path);
         }
 
-        if (!is_readable($fullPath)) {
-            throw new PermissionException($fullPath, 'read');
+        if (is_file($fullPath)) {
+            return $this->file($path);
         }
 
-        $content = @file_get_contents($fullPath);
-        if ($content === false) {
-            throw new IOException("Unable to read file: {$fullPath}");
+        if (is_dir($fullPath)) {
+            return $this->directory($path);
         }
 
-        return $content;
+        throw new FileNotFoundException($fullPath);
     }
 
     public function require(string $path)
@@ -249,7 +249,7 @@ class Filesystem implements FilesystemContract
             throw new FileNotFoundException($fullPath);
         }
 
-        $contents = $this->get($path);
+        $contents = $this->readFileContents($path);
 
         $decoded = json_decode($contents, $assoc);
         if (json_last_error() !== JSON_ERROR_NONE) {
@@ -290,7 +290,7 @@ class Filesystem implements FilesystemContract
             throw new FileNotFoundException($fullPath);
         }
 
-        return $this->get($path);
+        return $this->readFileContents($path);
     }
 
     /**
@@ -302,7 +302,7 @@ class Filesystem implements FilesystemContract
 
         $current = '';
         try {
-            $current = $this->get($path);
+            $current = $this->readFileContents($path);
         } catch (FileNotFoundException) {
             // pass empty string to updater
         }
@@ -381,6 +381,134 @@ class Filesystem implements FilesystemContract
         );
     }
 
+    public function isLink(string $path): bool
+    {
+        return is_link($this->resolvePath($path));
+    }
+
+    public function link(string $path): Link
+    {
+        $fullPath = $this->resolvePath($path);
+
+        if (!is_link($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        $rawTarget = @readlink($fullPath);
+        if ($rawTarget === false) {
+            $target = $fullPath;
+            $isBroken = true;
+            $targetType = null;
+        } else {
+            if ($this->isAbsolutePath($rawTarget)) {
+                $resolvedTarget = $rawTarget;
+            } else {
+                $resolvedTarget = \dirname($fullPath) . DIRECTORY_SEPARATOR . $rawTarget;
+            }
+
+            $real = @realpath($resolvedTarget);
+            $targetPath = $real !== false ? $real : $resolvedTarget;
+
+            $isBroken = !file_exists($targetPath);
+            $targetType = null;
+            if (!$isBroken) {
+                if (is_file($targetPath)) {
+                    $targetType = 'file';
+                } elseif (is_dir($targetPath)) {
+                    $targetType = 'directory';
+                }
+            }
+
+            $target = $targetPath;
+        }
+
+        return new Link(
+            filesystem: $this,
+            path: $fullPath,
+            target: $target,
+            isBroken: $isBroken,
+            targetType: $targetType,
+        );
+    }
+
+    public function links(string $directory, bool $recursive = false): array
+    {
+        $fullPath = $this->resolvePath($directory);
+
+        if (!is_dir($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        $result = [];
+
+        $items = @scandir($fullPath);
+        if ($items === false) {
+            throw new IOException("Unable to scan directory: {$fullPath}");
+        }
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+
+            $path = $fullPath . DIRECTORY_SEPARATOR . $item;
+
+            if (is_link($path)) {
+                $relative = $this->basePath === null
+                    ? $path
+                    : ltrim(substr($path, strlen($this->basePath)), DIRECTORY_SEPARATOR);
+                $result[] = $this->link($relative);
+            } elseif ($recursive && is_dir($path)) {
+                $subLinks = $this->links(
+                    $this->basePath === null
+                        ? $path
+                        : ltrim(substr($path, strlen($this->basePath)), DIRECTORY_SEPARATOR),
+                    true
+                );
+                array_push($result, ...$subLinks);
+            }
+        }
+
+        return $result;
+    }
+
+    public function createSymlink(string $target, string $linkPath): void
+    {
+        $linkFullPath = $this->resolvePath($linkPath);
+        $linkDir = \dirname($linkFullPath);
+
+        if (file_exists($linkFullPath)) {
+            throw new IOException("Symlink path already exists: {$linkFullPath}");
+        }
+
+        $this->ensureDirectoryExists($linkDir);
+
+        if (!is_writable($linkDir)) {
+            throw new PermissionException($linkDir, 'write');
+        }
+
+        $targetResolved = $target;
+        if (!$this->isAbsolutePath($target)) {
+            $targetResolved = $linkDir . DIRECTORY_SEPARATOR . $target;
+        } else {
+            $targetResolved = $this->resolvePath($target);
+        }
+
+        if (!@symlink($targetResolved, $linkFullPath)) {
+            throw new IOException("Unable to create symlink from {$targetResolved} to {$linkFullPath}");
+        }
+    }
+
+    public function realPath(string $path): string
+    {
+        $fullPath = $this->resolvePath($path);
+        $real = @realpath($fullPath);
+        if ($real === false) {
+            throw new FileNotFoundException($fullPath);
+        }
+        return $real;
+    }
+
     /**
      * Read-modify-write cycle for a JSON file. Missing file is treated as empty array.
      *
@@ -440,7 +568,11 @@ class Filesystem implements FilesystemContract
         $fromPath = $this->resolvePath($from);
         $toPath = $this->resolvePath($to);
 
-        if (!is_file($fromPath)) {
+        if (!file_exists($fromPath)) {
+            throw new FileNotFoundException($fromPath);
+        }
+
+        if (!is_file($fromPath) && !is_dir($fromPath) && !is_link($fromPath)) {
             throw new FileNotFoundException($fromPath);
         }
 
@@ -451,8 +583,13 @@ class Filesystem implements FilesystemContract
         }
 
         if (!@rename($fromPath, $toPath)) {
-            throw new IOException("Unable to move file from {$fromPath} to {$toPath}");
+            throw new IOException("Unable to move from {$fromPath} to {$toPath}");
         }
+    }
+
+    public function rename(string $from, string $to): void
+    {
+        $this->move($from, $to);
     }
 
     public function copy(string $from, string $to): void
@@ -818,6 +955,33 @@ class Filesystem implements FilesystemContract
         }
 
         $this->makeDirectory($directory, 0755, true);
+    }
+
+    /**
+     * Low-level helper to read raw file contents with error handling.
+     *
+     * @throws FileNotFoundException
+     * @throws IOException
+     * @throws PermissionException
+     */
+    private function readFileContents(string $path): string
+    {
+        $fullPath = $this->resolvePath($path);
+
+        if (!is_file($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        if (!is_readable($fullPath)) {
+            throw new PermissionException($fullPath, 'read');
+        }
+
+        $content = @file_get_contents($fullPath);
+        if ($content === false) {
+            throw new IOException("Unable to read file: {$fullPath}");
+        }
+
+        return $content;
     }
 
     /**

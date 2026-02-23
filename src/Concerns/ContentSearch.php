@@ -9,7 +9,7 @@ use MB\Filesystem\Exceptions\FileNotFoundException;
 /**
  * Trait for content-based file search (substring and regex).
  *
- * Requires the using class to implement: files(string $directory, bool $recursive), get(string $path).
+ * Requires the using class to implement: files(string $directory, bool $recursive), content(string $path, ?string $default = null).
  */
 trait ContentSearch
 {
@@ -32,7 +32,7 @@ trait ContentSearch
 
         foreach ($candidates as $path) {
             try {
-                $contents = $this->get($path);
+                $contents = $this->content($path);
             } catch (FileNotFoundException) {
                 continue;
             }
@@ -68,7 +68,7 @@ trait ContentSearch
 
         foreach ($candidates as $path) {
             try {
-                $contents = $this->get($path);
+                $contents = $this->content($path);
             } catch (FileNotFoundException) {
                 continue;
             }
