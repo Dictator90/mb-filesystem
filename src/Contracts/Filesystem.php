@@ -291,4 +291,52 @@ interface Filesystem
      * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the path does not exist or resolution fails.
      */
     public function realPath(string $path): string;
+
+    /**
+     * Find file paths under a directory that contain the given pattern (literal or regex).
+     *
+     * @param array<string,mixed> $options Optional: "regex" (bool), "extensions" (string[]), "case_sensitive" (bool).
+     *
+     * @return array<int,string> Paths of files containing at least one match.
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the directory does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException If the directory cannot be read or pattern is invalid.
+     */
+    public function grepPaths(string $directory, string $pattern, array $options = []): array;
+
+    /**
+     * Find files under a directory that contain the given pattern; returns File nodes.
+     *
+     * @param array<string,mixed> $options Optional: "regex" (bool), "extensions" (string[]), "case_sensitive" (bool).
+     *
+     * @return array<int,File>
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the directory does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException If the directory cannot be read or pattern is invalid.
+     */
+    public function grep(string $directory, string $pattern, array $options = []): array;
+
+    /**
+     * Find paths under a directory matching name/type/depth filters (find-like).
+     *
+     * @param array<string,mixed> $options Optional: "name" (string), "name_pattern" (string), "type" ('file'|'dir'|'link'), "max_depth" (int|null).
+     *
+     * @return array<int,string> Paths of matching files, directories, or symlinks.
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the directory does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException If the directory cannot be read.
+     */
+    public function findPaths(string $directory, array $options = []): array;
+
+    /**
+     * Find nodes under a directory matching name/type/depth filters; returns File, Directory, or Link nodes.
+     *
+     * @param array<string,mixed> $options Optional: "name" (string), "name_pattern" (string), "type" ('file'|'dir'|'link'), "max_depth" (int|null).
+     *
+     * @return array<int,File|Directory|Link>
+     *
+     * @throws \MB\Filesystem\Exceptions\FileNotFoundException If the directory does not exist.
+     * @throws \MB\Filesystem\Exceptions\IOException If the directory cannot be read.
+     */
+    public function find(string $directory, array $options = []): array;
 }

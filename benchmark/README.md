@@ -43,7 +43,7 @@ BENCH_FILES=200 BENCH_LARGE_MB=0.5 composer benchmark
 4. **get()** — read content of many small files
 5. **File::update() atomic** — read-modify-write via File node (temp + rename)
 6. **updateContent(path, updater, false)** — non-atomic read-modify-write by path (direct write, faster)
-7. **substring()** — content search over PHP files
+7. **grepPaths()** — content search over PHP files
 8. **File::content()** — load full large file into memory
 9. **File::lines()** — iterate large file line-by-line (streaming)
 10. **copyDirectoryRecursive** — recursive copy

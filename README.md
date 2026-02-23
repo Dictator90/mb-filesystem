@@ -266,34 +266,60 @@ foreach ($byImplements as $info) {
 }
 ```
 
-## Content search (substring and regex)
+## Search: grep and find
 
-Search for files by content using `substring()` and `regex()` on the Filesystem instance.
+Four methods provide content search (grep-like) and path search (find-like). Path-only variants return `string[]` (lighter); node variants return `File[]` or `File|Directory|Link[]` for use with metadata and methods.
+
+**When to use which:** Use `grepPaths` / `findPaths` when you only need paths or have very large result sets; use `grep` / `find` when you need node metadata or methods (`content()`, `size`, etc.). All are implemented in pure PHP (no shell).
+
+### Content search (grepPaths / grep)
 
 ```php
-$filesystem = new Filesystem();
+$filesystem = new Filesystem(__DIR__);
 
-// Find all PHP files under /bitrix that contain $APPLICATION->IncludeComponent(
-$files = $filesystem->substring(
-    __DIR__ . '/bitrix',
-    '$APPLICATION->IncludeComponent(',
-    extensions: ['php'],
-);
+// Paths only (lighter)
+$paths = $filesystem->grepPaths('bitrix/templates', '$APPLICATION->IncludeComponent(', [
+    'extensions' => ['php'],
+]);
 
-// Find only component*.php files that contain the substring
-$componentFiles = $filesystem->substring(
-    __DIR__ . '/bitrix',
-    '$APPLICATION->IncludeComponent(',
-    extensions: ['php'],
-    filenameMask: 'component*.php',
-);
+// File nodes (for metadata / content)
+$files = $filesystem->grep('bitrix/templates', '$APPLICATION->IncludeComponent(', [
+    'extensions' => ['php'],
+]);
+foreach ($files as $file) {
+    echo $file->path . PHP_EOL;
+    $content = $file->content();
+}
 
-// Use regex to find calls with arbitrary whitespace
-$regexMatches = $filesystem->regex(
-    __DIR__ . '/bitrix',
-    '/\$APPLICATION->IncludeComponent\s*\(/',
-    extensions: ['php'],
-);
+// Regex and case-insensitive
+$paths = $filesystem->grepPaths('bitrix', '/IncludeComponent\s*\(/', [
+    'regex' => true,
+    'extensions' => ['php'],
+    'case_sensitive' => false,
+]);
+```
+
+### Path search (findPaths / find)
+
+```php
+// Find all component.php files (paths)
+$paths = $filesystem->findPaths('bitrix', [
+    'name' => 'component.php',
+    'type' => 'file',
+]);
+
+// Find all directories named templates
+$dirs = $filesystem->find('bitrix', [
+    'name' => 'templates',
+    'type' => 'dir',
+]);
+
+// Find by shell-like pattern and limit depth
+$phpFiles = $filesystem->findPaths('src', [
+    'name_pattern' => '*.php',
+    'type' => 'file',
+    'max_depth' => 2,
+]);
 ```
 
 ## Error handling
@@ -315,4 +341,39 @@ try {
     // other I/O error
 }
 ```
+
+## Development
+
+### Running tests
+
+Install dev dependencies and run the full test suite:
+
+```bash
+composer install
+composer test
+```
+
+Or run PHPUnit directly (with optional config):
+
+```bash
+vendor/bin/phpunit
+```
+
+On Windows use `vendor\bin\phpunit`. Some tests (e.g. symlink creation) may be skipped if the environment does not support them (e.g. creating symlinks without Administrator or Developer Mode on Windows).
+
+### Running the benchmark
+
+The benchmark measures performance of common operations (put/get, recursive listing, content search, file updates, etc.) and prints timing and memory statistics.
+
+```bash
+composer benchmark
+```
+
+Or directly:
+
+```bash
+php benchmark/run.php
+```
+
+You can tune the run via environment variables; see [benchmark/README.md](benchmark/README.md) for options (e.g. `BENCH_FILES`, `BENCH_TREE_DEPTH`, `BENCH_LARGE_MB`).
 

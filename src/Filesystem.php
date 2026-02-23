@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace MB\Filesystem;
 
-use MB\Filesystem\Concerns\ContentSearch;
 use MB\Filesystem\Contracts\Filesystem as FilesystemContract;
 use MB\Filesystem\Exceptions\FileNotFoundException;
 use MB\Filesystem\Exceptions\IOException;
@@ -19,7 +18,6 @@ use MB\Support\Collection;
  */
 class Filesystem implements FilesystemContract
 {
-    use ContentSearch;
     /**
      * Base directory that relative paths are resolved against.
      * If null, paths are used as-is.
@@ -507,6 +505,185 @@ class Filesystem implements FilesystemContract
             throw new FileNotFoundException($fullPath);
         }
         return $real;
+    }
+
+    public function grepPaths(string $directory, string $pattern, array $options = []): array
+    {
+        $regex = $options['regex'] ?? false;
+        $extensions = $options['extensions'] ?? ['php'];
+        $caseSensitive = $options['case_sensitive'] ?? true;
+
+        $candidates = $this->collectGrepCandidates($directory, $extensions);
+        $matches = [];
+
+        if ($regex) {
+            $result = @preg_match($pattern, '');
+            if ($result === false) {
+                throw new IOException(
+                    'Invalid regex pattern: ' . $pattern . ' (error: ' . preg_last_error() . ')'
+                );
+            }
+        }
+
+        foreach ($candidates as $path) {
+            try {
+                $contents = $this->content($path);
+            } catch (FileNotFoundException) {
+                continue;
+            }
+
+            if ($regex) {
+                $result = @preg_match($pattern, $contents);
+                if ($result === 1) {
+                    $matches[] = $path;
+                } elseif ($result === false) {
+                    throw new IOException(
+                        'Invalid regex pattern during search: ' . $pattern . ' (error: ' . preg_last_error() . ')'
+                    );
+                }
+            } else {
+                if ($pattern === '') {
+                    $matches[] = $path;
+                } elseif ($caseSensitive && str_contains($contents, $pattern)) {
+                    $matches[] = $path;
+                } elseif (!$caseSensitive && mb_stripos($contents, $pattern) !== false) {
+                    $matches[] = $path;
+                }
+            }
+        }
+
+        return $matches;
+    }
+
+    /**
+     * @return array<int,File>
+     */
+    public function grep(string $directory, string $pattern, array $options = []): array
+    {
+        $paths = $this->grepPaths($directory, $pattern, $options);
+        $result = [];
+        foreach ($paths as $path) {
+            $result[] = $this->file($path);
+        }
+        return $result;
+    }
+
+    public function findPaths(string $directory, array $options = []): array
+    {
+        $name = $options['name'] ?? null;
+        $namePattern = $options['name_pattern'] ?? null;
+        $type = $options['type'] ?? null;
+        $maxDepth = $options['max_depth'] ?? null;
+
+        $fullPath = $this->resolvePath($directory);
+        if (!is_dir($fullPath)) {
+            throw new FileNotFoundException($fullPath);
+        }
+
+        $result = [];
+        $this->walkFindPaths($fullPath, $directory, 0, $maxDepth, $name, $namePattern, $type, $result);
+        return $result;
+    }
+
+    /**
+     * @return array<int,File|Directory|Link>
+     */
+    public function find(string $directory, array $options = []): array
+    {
+        $paths = $this->findPaths($directory, $options);
+        $result = [];
+        foreach ($paths as $path) {
+            $fullPath = $this->resolvePath($path);
+            if (is_link($fullPath)) {
+                $result[] = $this->link($path);
+            } elseif (is_file($fullPath)) {
+                $result[] = $this->file($path);
+            } else {
+                $result[] = $this->directory($path);
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * @param array<string> $extensions
+     *
+     * @return array<int,string>
+     */
+    private function collectGrepCandidates(string $directory, array $extensions): array
+    {
+        $allFiles = $this->files($directory, true);
+        $normalized = array_values(array_filter(
+            array_map(static fn (string $ext): string => strtolower(ltrim($ext, '.')), $extensions),
+            static fn (string $ext): bool => $ext !== ''
+        ));
+
+        return array_values(array_filter(
+            $allFiles,
+            function (string $path) use ($normalized): bool {
+                $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+                return $normalized === [] || in_array($ext, $normalized, true);
+            }
+        ));
+    }
+
+    /**
+     * @param array<int,string> $result
+     */
+    private function walkFindPaths(
+        string $fullDirPath,
+        string $dirPath,
+        int $currentDepth,
+        ?int $maxDepth,
+        ?string $name,
+        ?string $namePattern,
+        ?string $type,
+        array &$result,
+    ): void {
+        $items = @scandir($fullDirPath);
+        if ($items === false) {
+            throw new IOException("Unable to scan directory: {$fullDirPath}");
+        }
+
+        $recurse = $maxDepth === null || $currentDepth + 1 < $maxDepth;
+        $depthAllowed = $maxDepth === null || $currentDepth + 1 <= $maxDepth;
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+
+            $fullPath = $fullDirPath . DIRECTORY_SEPARATOR . $item;
+            $isLink = is_link($fullPath);
+            $isFile = is_file($fullPath);
+            $isDir = is_dir($fullPath);
+
+            $basename = basename($fullPath);
+
+            $matchesType = $type === null
+                || ($type === 'file' && $isFile)
+                || ($type === 'dir' && $isDir)
+                || ($type === 'link' && $isLink);
+            $matchesName = $name === null || $name === '' || $basename === $name;
+            $matchesPattern = $namePattern === null || $namePattern === '' || fnmatch($namePattern, $basename);
+
+            if ($depthAllowed && $matchesType && $matchesName && $matchesPattern) {
+                $result[] = $fullPath;
+            }
+
+            if ($isDir && $recurse) {
+                $this->walkFindPaths(
+                    $fullPath,
+                    $dirPath,
+                    $currentDepth + 1,
+                    $maxDepth,
+                    $name,
+                    $namePattern,
+                    $type,
+                    $result
+                );
+            }
+        }
     }
 
     /**

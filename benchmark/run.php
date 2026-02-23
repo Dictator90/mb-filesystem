@@ -72,7 +72,7 @@ $filesPerDir = (int) ceil($numFiles / (pow($dirsPerLevel, $treeDepth)));
 buildTree($fs, 'tree', $treeDepth, $dirsPerLevel, $filesPerDir, 0, $created);
 $totalFilesCreated = $created;
 
-// Some PHP files for substring search
+// Some PHP files for grepPaths search
 $needle = '__BENCH_NEEDLE__';
 $fs->makeDirectory('phpsearch');
 for ($i = 0; $i < 200; $i++) {
@@ -158,9 +158,9 @@ $r = measure("updateContent(path, updater, false) x{$updateCount}", function () 
 $r['count'] = $updateCount;
 $stats[] = $r;
 
-// --- Benchmark: substring search ---
-$r = measure('substring(phpsearch, needle)', function () use ($fs, $needle) {
-    $fs->substring('phpsearch', $needle, ['php']);
+// --- Benchmark: grepPaths (content search) ---
+$r = measure('grepPaths(phpsearch, needle)', function () use ($fs, $needle) {
+    $fs->grepPaths('phpsearch', $needle, ['extensions' => ['php']]);
 });
 $r['count'] = 40; // 200/5
 $stats[] = $r;
