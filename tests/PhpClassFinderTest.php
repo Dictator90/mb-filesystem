@@ -291,5 +291,248 @@ PHP);
         $this->assertContains('App\WithTrait\User', $classes);
         $this->assertNotContains('App\WithTrait\Plain', $classes);
     }
+
+    public function testFindsDirectChild(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/DeepDirect');
+
+        $fs->put('src/DeepDirect/BaseClass.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\DeepDirect;
+
+class BaseClass
+{
+}
+PHP);
+
+        $fs->put('src/DeepDirect/DirectChild.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\DeepDirect;
+
+class DirectChild extends BaseClass
+{
+}
+PHP);
+
+        $results = $this->finder()->extends($this->tmpDir, 'App\DeepDirect\BaseClass');
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\DeepDirect\DirectChild', $classes);
+    }
+
+    public function testFindsNestedChildByDefault(): void
+    {
+        $this->writeInheritanceChain('App\DeepDefault', 'src/DeepDefault');
+
+        $results = $this->finder()->extends($this->tmpDir, 'App\DeepDefault\BaseClass');
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\DeepDefault\MiddleClass', $classes);
+        $this->assertContains('App\DeepDefault\FinalClass', $classes);
+    }
+
+    public function testCanSearchOnlyDirectChildren(): void
+    {
+        $this->writeInheritanceChain('App\DirectOnly', 'src/DirectOnly');
+
+        $results = $this->finder()->extends($this->tmpDir, 'App\DirectOnly\BaseClass', false);
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\DirectOnly\MiddleClass', $classes);
+        $this->assertNotContains('App\DirectOnly\FinalClass', $classes);
+    }
+
+    public function testDoesNotReturnUnrelatedClasses(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/Unrelated');
+
+        $fs->put('src/Unrelated/Classes.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\Unrelated;
+
+class BaseClass
+{
+}
+
+class ChildClass extends BaseClass
+{
+}
+
+class OtherBase
+{
+}
+
+class OtherChild extends OtherBase
+{
+}
+
+class PlainClass
+{
+}
+PHP);
+
+        $results = $this->finder()->extends($this->tmpDir, 'App\Unrelated\BaseClass');
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\Unrelated\ChildClass', $classes);
+        $this->assertNotContains('App\Unrelated\OtherBase', $classes);
+        $this->assertNotContains('App\Unrelated\OtherChild', $classes);
+        $this->assertNotContains('App\Unrelated\PlainClass', $classes);
+    }
+
+    public function testResolvesUseAliasesInDeepSearch(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/AliasDeep/Repositories');
+        $fs->makeDirectory('src/AliasDeep/Services');
+
+        $fs->put('src/AliasDeep/BaseClass.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\AliasDeep;
+
+class BaseClass
+{
+}
+PHP);
+
+        $fs->put('src/AliasDeep/Repositories/Repository.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\AliasDeep\Repositories;
+
+use App\AliasDeep\BaseClass as ParentClass;
+
+class Repository extends ParentClass
+{
+}
+PHP);
+
+        $fs->put('src/AliasDeep/Services/ProductRepository.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\AliasDeep\Services;
+
+use App\AliasDeep\Repositories\Repository;
+
+class ProductRepository extends Repository
+{
+}
+PHP);
+
+        $results = $this->finder()->extends($this->tmpDir, 'App\AliasDeep\BaseClass');
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\AliasDeep\Repositories\Repository', $classes);
+        $this->assertContains('App\AliasDeep\Services\ProductRepository', $classes);
+    }
+
+    public function testResolvesFullyQualifiedExtends(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/FullyQualified/Services');
+
+        $fs->put('src/FullyQualified/BaseClass.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\FullyQualified;
+
+class BaseClass
+{
+}
+PHP);
+
+        $fs->put('src/FullyQualified/Services/Service.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\FullyQualified\Services;
+
+class Service extends \App\FullyQualified\BaseClass
+{
+}
+PHP);
+
+        $results = $this->finder()->extends($this->tmpDir, 'App\FullyQualified\BaseClass');
+        $classes = array_column($results, 'class');
+
+        $this->assertContains('App\FullyQualified\Services\Service', $classes);
+    }
+
+    public function testStopsWhenParentClassIsOutsideScannedDirectory(): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory('src/ExternalParent');
+
+        $fs->put('src/ExternalParent/ExternalChild.php', <<<'PHP'
+<?php
+
+declare(strict_types=1);
+
+namespace App\ExternalParent;
+
+class ExternalChild extends \Vendor\BaseClass
+{
+}
+PHP);
+
+        $results = $this->finder()->extends($this->tmpDir, 'App\ExternalParent\BaseClass');
+        $classes = array_column($results, 'class');
+
+        $this->assertSame([], $classes);
+    }
+
+    private function writeInheritanceChain(string $namespace, string $directory): void
+    {
+        $fs = $this->fs();
+
+        $fs->makeDirectory($directory);
+
+        $fs->put($directory . '/Classes.php', <<<PHP
+<?php
+
+declare(strict_types=1);
+
+namespace {$namespace};
+
+class BaseClass
+{
+}
+
+class MiddleClass extends BaseClass
+{
+}
+
+class FinalClass extends MiddleClass
+{
+}
+PHP);
+    }
+
 }
 

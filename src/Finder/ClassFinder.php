@@ -25,18 +25,32 @@ class ClassFinder
      *
      * @return array<int,array<string,mixed>> List of class metadata arrays.
      */
-    public function extends(string $directory, string $baseClassFqcn): array
+    public function extends(string $directory, string $baseClassFqcn, bool $deep = true): array
     {
         $target = $this->normalizeClassName($baseClassFqcn);
         $results = [];
+        $classes = $this->parseDirectoryClasses($directory);
+        $classMap = $deep ? $this->buildClassMap($classes) : [];
 
-        foreach ($this->phpFilesIn($directory) as $file) {
-            foreach ($this->parseFile($file) as $classInfo) {
-                $extends = $classInfo['extends'] ?? null;
+        foreach ($classes as $classInfo) {
+            $class = $classInfo['class'] ?? null;
 
-                if ($extends !== null && $this->normalizeClassName($extends) === $target) {
+            if (is_string($class) && $this->normalizeClassName($class) === $target) {
+                continue;
+            }
+
+            if ($deep) {
+                if ($this->isDescendantOf($classInfo, $target, $classMap)) {
                     $results[] = $classInfo;
                 }
+
+                continue;
+            }
+
+            $extends = $classInfo['extends'] ?? null;
+
+            if ($extends !== null && $this->normalizeClassName($extends) === $target) {
+                $results[] = $classInfo;
             }
         }
 
@@ -108,6 +122,80 @@ class ClassFinder
             ->filter(static fn (string $path): bool => strtolower(pathinfo($path, PATHINFO_EXTENSION)) === 'php')
             ->values()
             ->all();
+    }
+
+    /**
+     * Parse all classes in a directory tree once.
+     *
+     * @return array<int,array<string,mixed>>
+     */
+    private function parseDirectoryClasses(string $directory): array
+    {
+        $classes = [];
+
+        foreach ($this->phpFilesIn($directory) as $file) {
+            foreach ($this->parseFile($file) as $classInfo) {
+                $classes[] = $classInfo;
+            }
+        }
+
+        return $classes;
+    }
+
+    /**
+     * Build an index of class metadata by normalized FQCN.
+     *
+     * @param array<int,array<string,mixed>> $classes
+     * @return array<string,array<string,mixed>>
+     */
+    private function buildClassMap(array $classes): array
+    {
+        $classMap = [];
+
+        foreach ($classes as $classInfo) {
+            if (!isset($classInfo['class']) || !is_string($classInfo['class'])) {
+                continue;
+            }
+
+            $classMap[$this->normalizeClassName($classInfo['class'])] = $classInfo;
+        }
+
+        return $classMap;
+    }
+
+    /**
+     * Check whether class metadata describes a descendant of the target class.
+     *
+     * @param array<string,mixed> $classInfo
+     * @param array<string,array<string,mixed>> $classMap
+     */
+    private function isDescendantOf(array $classInfo, string $target, array $classMap): bool
+    {
+        $parent = $classInfo['extends'] ?? null;
+        $visited = [];
+
+        while (is_string($parent) && $parent !== '') {
+            $normalizedParent = $this->normalizeClassName($parent);
+
+            if ($normalizedParent === $target) {
+                return true;
+            }
+
+            if (isset($visited[$normalizedParent])) {
+                return false;
+            }
+
+            $visited[$normalizedParent] = true;
+            $parentInfo = $classMap[$normalizedParent] ?? null;
+
+            if ($parentInfo === null) {
+                return false;
+            }
+
+            $parent = $parentInfo['extends'] ?? null;
+        }
+
+        return false;
     }
 
     /**
@@ -529,7 +617,7 @@ class ClassFinder
                         }
                     }
 
-                    $fqcn          = $baseTrimmed . '\\\\' . $namePart;
+                    $fqcn          = $baseTrimmed . '\\' . $namePart;
                     $uses[$alias] = ltrim($fqcn, '\\\\');
 
                     // Move past comma or end of group
@@ -554,7 +642,7 @@ class ClassFinder
             }
 
             // Simple use: use Foo\Bar\Baz; or with alias: use Foo\Bar\Baz as Alias;
-            $alias = $baseTrimmed !== '' ? basename(str_replace('\\\\', '/', $baseTrimmed)) : '';
+            $alias = $baseTrimmed !== '' ? basename(str_replace('\\', '/', $baseTrimmed)) : '';
 
             // Skip whitespace
             while ($i < $count && is_array($tokens[$i]) && $tokens[$i][0] === T_WHITESPACE) {
