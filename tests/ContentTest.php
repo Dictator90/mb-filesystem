@@ -84,4 +84,42 @@ final class ContentTest extends FilesystemTestCase
         $fs->putAtomic($path, 'x');
         $this->assertSame('x', $fs->content($path));
     }
+
+    public function testAppendCreatesMissingFile(): void
+    {
+        $fs = $this->fs();
+        $path = 'new-append.txt';
+
+        $this->assertFalse($fs->existsFile($path));
+
+        $fs->append($path, 'first');
+
+        $this->assertTrue($fs->existsFile($path));
+        $this->assertSame('first', $fs->content($path));
+    }
+
+    public function testAppendKeepsPreviousContent(): void
+    {
+        $fs = $this->fs();
+        $path = 'grow.txt';
+
+        $fs->append($path, "line1\n");
+        $fs->append($path, "line2\n");
+        $fs->append($path, "line3\n");
+
+        $this->assertSame("line1\nline2\nline3\n", $fs->content($path));
+    }
+
+    public function testAppendCreatesMissingDirectories(): void
+    {
+        $fs = $this->fs();
+        $path = 'nested/deep/dir/append.txt';
+
+        $this->assertFalse($fs->existsDirectory('nested/deep/dir'));
+
+        $fs->append($path, 'data');
+
+        $this->assertTrue($fs->existsDirectory('nested/deep/dir'));
+        $this->assertSame('data', $fs->content($path));
+    }
 }
