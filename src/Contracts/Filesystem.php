@@ -102,6 +102,14 @@ interface Filesystem
     public function putJson(string $path, array $data, int $flags = JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE): void;
 
     /**
+     * Append contents to the end of a file, creating the file and any missing directories if necessary.
+     *
+     * @throws \MB\Filesystem\Exceptions\IOException On write failure.
+     * @throws \MB\Filesystem\Exceptions\PermissionException If there are no permissions to write.
+     */
+    public function append(string $path, string $contents): void;
+
+    /**
      * Read JSON from a file and decode it.
      *
      * @param array<mixed,mixed>|object|null $default If the file does not exist and this is not null, return it.
